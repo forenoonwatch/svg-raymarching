@@ -1,0 +1,15 @@
+[submodule "third_party/glfw"]
+	path = third_party/glfw
+	url = https://github.com/glfw/glfw
+[submodule "third_party/glm"]
+	path = third_party/glm
+	url = https://github.com/g-truc/glm
+[submodule "third_party/nanovg"]
+	path = third_party/nanovg
+	url = https://github.com/memononen/nanovg
+[submodule "third_party/nanosvg"]
+	path = third_party/nanosvg
+	url = https://github.com/memononen/nanosvg
+[submodule "third_party/riichi-mahjong-tiles"]
+	path = third_party/riichi-mahjong-tiles
+	url = https://github.com/FluffyStuff/riichi-mahjong-tiles
