@@ -22,6 +22,8 @@
 #include "shader.hpp"
 #include "svg_shader.hpp"
 
+#include "martinez.hpp"
+
 static constexpr const char* g_lineVertex = R"(
 #version 460
 
@@ -71,6 +73,9 @@ static void convert_cpu_path_data_to_gpu(const std::vector<CPUQuadraticShape>& s
 static void nvg_draw(NVGcontext* vg, NSVGimage* nsvg);
 static void debug_draw_lines(NVGcontext* vg, GPUPathData& shaderPathData, uint32_t shaderShapeCount);
 
+static void draw_polygon(NVGcontext* vg, const Polygon& polygon, const glm::vec2& offset,
+		NVGcolor color);
+
 int main() {
 	glfwInit();
 
@@ -88,7 +93,7 @@ int main() {
 
 	auto* vg = nvgCreateGL3(NVG_DEBUG);
 
-	auto svgData = file_read_bytes("../third_party/riichi-mahjong-tiles/Regular/Sou1.svg");
+	auto svgData = file_read_bytes("../third_party/riichi-mahjong-tiles/Regular/Chun.svg");
 	Scene svg;
 
 	if (svgData) {
@@ -98,7 +103,7 @@ int main() {
 		perror("");
 	}
 
-	NSVGimage* nsvg = nsvgParseFromFile("../third_party/riichi-mahjong-tiles/Regular/Sou1.svg", "px", 96);
+	NSVGimage* nsvg = nsvgParseFromFile("../third_party/riichi-mahjong-tiles/Regular/Chun.svg", "px", 96);
 
 	unsigned vao;
 	glCreateVertexArrays(1, &vao);
@@ -121,6 +126,23 @@ int main() {
 
 	float counter = 0.f;
 
+	Polygon subject{
+		.subShapes = {
+			{.points = {{6, 43}, {-1.5f, -198}, {248, -199.5f}, {252.5f, 42.5f}, {6, 43}}},
+			{.points = {{57.5f, 1.5f}, {50.5f, -149}, {210, -150.5f}, {213, 3}, {57.5f, 1.5f}}},
+		}
+	};
+
+	Polygon clipping{
+		.subShapes = {
+			{.points = {{18.5f, 89.5f}, {90, -141.5f}, {178.5f, -181.5f}, {184, 79.5f}, {18.5f, 89.5f}}},
+			{.points = {{112.5f, -108.5f}, {72, 57.5f}, {162, 59.5f}, {158, -132}, {112.5f, -108.5f}}},
+		}
+	};
+
+	Polygon result{};
+	martinez_boolean(subject, clipping, result, BooleanOperation::XOR);
+
 	while (!glfwWindowShouldClose(window)) {
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
@@ -140,45 +162,11 @@ int main() {
 		
 		nvgBeginFrame(vg, g_width, g_height, 1.0);
 
+		draw_polygon(vg, subject, {200, 300}, nvgRGBA(0, 255, 0, 255));
+		draw_polygon(vg, clipping, {200, 300}, nvgRGBA(0, 255, 0, 255));
+		draw_polygon(vg, result, {200, 300}, nvgRGBA(255, 0, 0, 255));
+
 		//debug_draw_lines(vg, shaderPathData, shaderShapeCount);
-
-		for (auto* shape = nsvg->shapes; shape; shape = shape->next) {
-			for (auto* path = shape->paths; path; path = path->next) {
-				nvgBeginPath(vg);
-				nvgMoveTo(vg, path->pts[0] + 300, path->pts[1]);
-
-				for (int i = 0; i < path->npts - 1; i += 3) {
-					auto* p = &path->pts[2 * i];
-					nvgBezierTo(vg, p[2] + 300, p[3], p[4] + 300, p[5], p[6] + 300, p[7]);
-				}
-
-				//nvgStrokeColor(vg, nvgRGBA(0, 255, 0, 255));
-				//nvgStroke(vg);
-
-				if (path->closed) {
-					nvgClosePath(vg);
-				}
-
-				for (int i = 0; i < 3; ++i) {
-					auto paintOrder = (shape->paintOrder >> (2 * i)) & 0x2U;
-
-					if (paintOrder == NSVG_PAINT_STROKE && shape->stroke.type != NSVG_PAINT_NONE) {
-						auto col = nvgRGBA(shape->stroke.color & 0xFF, (shape->stroke.color >> 8) & 0xFF,
-								(shape->stroke.color >> 16) & 0xFF, (shape->stroke.color >> 24) & 0xFF);
-						nvgLineCap(vg, NVG_ROUND);
-						nvgStrokeColor(vg, col);
-						nvgStrokeWidth(vg, shape->strokeWidth);
-						nvgStroke(vg);
-					}
-					else if (paintOrder == NSVG_PAINT_FILL && shape->fill.type != NSVG_PAINT_NONE) {
-						auto col = nvgRGBA(shape->fill.color & 0xFF, (shape->fill.color >> 8) & 0xFF,
-								(shape->fill.color >> 16) & 0xFF, (shape->fill.color >> 24) & 0xFF);
-						nvgFillColor(vg, col);
-						nvgFill(vg);
-					}
-				}
-			}
-		}
 
 		nvgEndFrame(vg);
 
@@ -195,6 +183,22 @@ int main() {
 
 	glfwDestroyWindow(window);
 	glfwTerminate();
+}
+
+static void draw_polygon(NVGcontext* vg, const Polygon& polygon, const glm::vec2& offset,
+		NVGcolor color) {
+	nvgBeginPath(vg);
+
+	for (auto& subshape : polygon.subShapes) {
+		nvgMoveTo(vg, subshape.points[0].x + offset.x, subshape.points[0].y + offset.y);
+
+		for (size_t i = 1; i < subshape.points.size(); ++i) {
+			nvgLineTo(vg, subshape.points[i].x + offset.x, subshape.points[i].y + offset.y);
+		}
+	}
+
+	nvgStrokeColor(vg, color);
+	nvgStroke(vg);
 }
 
 static void convert_cpu_path_data_to_gpu(const std::vector<CPUQuadraticShape>& shapes, GPUPathData& pathData,
@@ -240,6 +244,46 @@ static void debug_draw_lines(NVGcontext* vg, GPUPathData& shaderPathData, uint32
 			nvgStroke(vg);
 
 			i = shaderPathData.pointCounts[ipath];
+		}
+	}
+}
+
+static void nvg_draw(NVGcontext* vg, NSVGimage* nsvg) {
+	for (auto* shape = nsvg->shapes; shape; shape = shape->next) {
+		for (auto* path = shape->paths; path; path = path->next) {
+			nvgBeginPath(vg);
+			nvgMoveTo(vg, path->pts[0] + 300, path->pts[1]);
+
+			for (int i = 0; i < path->npts - 1; i += 3) {
+				auto* p = &path->pts[2 * i];
+				nvgBezierTo(vg, p[2] + 300, p[3], p[4] + 300, p[5], p[6] + 300, p[7]);
+			}
+
+			//nvgStrokeColor(vg, nvgRGBA(0, 255, 0, 255));
+			//nvgStroke(vg);
+
+			if (path->closed) {
+				nvgClosePath(vg);
+			}
+
+			for (int i = 0; i < 3; ++i) {
+				auto paintOrder = (shape->paintOrder >> (2 * i)) & 0x2U;
+
+				if (paintOrder == NSVG_PAINT_STROKE && shape->stroke.type != NSVG_PAINT_NONE) {
+					auto col = nvgRGBA(shape->stroke.color & 0xFF, (shape->stroke.color >> 8) & 0xFF,
+							(shape->stroke.color >> 16) & 0xFF, (shape->stroke.color >> 24) & 0xFF);
+					nvgLineCap(vg, NVG_ROUND);
+					nvgStrokeColor(vg, col);
+					nvgStrokeWidth(vg, shape->strokeWidth);
+					nvgStroke(vg);
+				}
+				else if (paintOrder == NSVG_PAINT_FILL && shape->fill.type != NSVG_PAINT_NONE) {
+					auto col = nvgRGBA(shape->fill.color & 0xFF, (shape->fill.color >> 8) & 0xFF,
+							(shape->fill.color >> 16) & 0xFF, (shape->fill.color >> 24) & 0xFF);
+					nvgFillColor(vg, col);
+					nvgFill(vg);
+				}
+			}
 		}
 	}
 }
