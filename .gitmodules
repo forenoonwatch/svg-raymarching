@@ -13,3 +13,12 @@
 [submodule "third_party/riichi-mahjong-tiles"]
 	path = third_party/riichi-mahjong-tiles
 	url = https://github.com/FluffyStuff/riichi-mahjong-tiles
+[submodule "third_party/Catch2"]
+	path = third_party/Catch2
+	url = https://github.com/catchorg/Catch2
+[submodule "third_party/simdjson"]
+	path = third_party/simdjson
+	url = https://github.com/simdjson/simdjson
+[submodule "third_party/martinez"]
+	path = third_party/martinez
+	url = https://github.com/w8r/martinez

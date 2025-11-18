@@ -141,7 +141,7 @@ int main() {
 	};
 
 	Polygon result{};
-	martinez_boolean(subject, clipping, result, BooleanOperation::XOR);
+	martinez_boolean(subject, clipping, result, BooleanOperation::INTERSECTION);
 
 	while (!glfwWindowShouldClose(window)) {
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);

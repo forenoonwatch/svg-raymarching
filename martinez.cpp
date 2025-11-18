@@ -1,8 +1,6 @@
-#include "martinez.hpp"
+#include "martinez_impl.hpp"
 
-#include <queue>
 #include <set>
-#include <memory>
 #include <utility>
 
 #include <cfloat>
@@ -11,84 +9,8 @@
 
 #include <glm/geometric.hpp>
 
-namespace {
-
-enum class EdgeType {
-	NORMAL,
-	NON_CONTRIBUTING,
-	SAME_TRANSITION,
-	DIFFERENT_TRANSITION,
-};
-
-enum class ResultTransition {
-	NOT_IN_RESULT = 0,
-	OUT_IN = 1,
-	IN_OUT = -1
-};
-
-struct AABB {
-	float minX;
-	float minY;
-	float maxX;
-	float maxY;
-
-	bool intersects(const AABB& other) const;
-};
-
-struct SweepEvent {
-	glm::vec2 point;
-	SweepEvent* otherEvent;
-	uint32_t contourID;
-	// Edge contribution type
-	EdgeType edgeType;
-	// Is the left endpoint?
-	bool left;
-	// Belongs to the source or clipping polygon
-	bool isSubject;
-	// FIXME: Potentially unused?
-	bool isExteriorRing;
-
-	bool inOut{false};
-	bool otherInOut{false};
-
-	SweepEvent* prevInResult{nullptr};
-	ResultTransition resultTransition{ResultTransition::NOT_IN_RESULT};
-
-	size_t otherPos;
-	uint32_t outputContourID;
-
-	bool is_below(const glm::vec2& p) const;
-	bool is_above(const glm::vec2& p) const;
-
-	bool is_vertical() const;
-	bool is_in_result() const;
-};
-
-struct CompareEvents {
-	bool operator()(const SweepEvent* a, const SweepEvent* b) const;
-};
-
-struct CompareSegments {
-	bool operator()(const SweepEvent* a, const SweepEvent* b) const;
-};
-
-using EventQueue = std::priority_queue<SweepEvent*, std::vector<SweepEvent*>, CompareEvents>;
-
-struct Contour {
-	std::vector<glm::vec2> points;
-	std::vector<uint32_t> holeIDs;
-	uint32_t holeOf{~0u};
-	uint32_t depth{};
-
-	bool is_exterior() const;
-};
-
-}
-
 static constexpr const AABB AABB_INVALID = {FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
 
-static void fill_queue(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
-		const Polygon& subject, const Polygon& clipping, AABB& sbbox, AABB& cbbox, BooleanOperation operation);
 static void process_polygon(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
 		const PolygonSubShape& contourOrHole, bool isSubject, AABB& bbox, bool isExteriorRing,
 		uint32_t contourID);
@@ -176,7 +98,7 @@ void martinez_boolean(const Polygon& subject, const Polygon& clipping, Polygon& 
 	}
 }
 
-static void fill_queue(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
+void fill_queue(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
 		const Polygon& subject, const Polygon& clipping, AABB& sbbox, AABB& cbbox, BooleanOperation operation) {
 	uint32_t contourID = 0;
 
@@ -191,7 +113,7 @@ static void fill_queue(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent
 	}
 
 	for (size_t i = 0; i < clipping.subShapes.size(); ++i) {
-		bool isExteriorRing = i == 0;
+		bool isExteriorRing = i == 0 && operation != BooleanOperation::DIFFERENCE;
 
 		if (isExteriorRing) {
 			++contourID;
@@ -218,11 +140,11 @@ static void process_polygon(EventQueue& queue, std::vector<std::unique_ptr<Sweep
 			continue;
 		}
 
-		if (CompareEvents{}(e1.get(), e2.get())) {
-			e1->left = true;
+		if (CompareEvents{}(e1.get(), e2.get()) == std::strong_ordering::greater) {
+			e2->left = true;
 		}
 		else {
-			e2->left = true;
+			e1->left = true;
 		}
 
 		bbox.minX = std::fminf(bbox.minX, s1.x);
@@ -246,7 +168,7 @@ static void subdivide_segments(EventQueue& queue, std::vector<std::unique_ptr<Sw
 
 	auto rightBound = std::fminf(sbbox.maxX, cbbox.maxX);
 
-	std::multiset<SweepEvent*, CompareSegments> sweepLine;
+	std::multiset<SweepEvent*, CompareSegmentsLess> sweepLine;
 
 	Node next, prev, begin;
 
@@ -479,7 +401,7 @@ static int possible_intersection(SweepEvent& a, SweepEvent& b, EventQueue& queue
 		if (a.point == b.point) {
 			leftCoincide = true; // linked
 		}
-		else if (!CompareEvents{}(&a, &b)) {
+		else if (CompareEvents{}(&a, &b) == std::strong_ordering::greater) {
 			*(ppEvents++) = &b;
 			*(ppEvents++) = &a;
 		}
@@ -491,7 +413,7 @@ static int possible_intersection(SweepEvent& a, SweepEvent& b, EventQueue& queue
 		if (a.otherEvent->point == b.otherEvent->point) {
 			rightCoincide = true;
 		}
-		else if (!CompareEvents{}(a.otherEvent, b.otherEvent)) {
+		else if (CompareEvents{}(a.otherEvent, b.otherEvent) == std::strong_ordering::greater) {
 			*(ppEvents++) = b.otherEvent;
 			*(ppEvents++) = a.otherEvent;
 		}
@@ -547,7 +469,7 @@ static void divide_segment(EventQueue& queue, std::vector<std::unique_ptr<SweepE
 	}
 
 	// Avoid a rounding error. The left event would be processed after the right event
-	if (!CompareEvents{}(l.get(), event.otherEvent)) {
+	if (CompareEvents{}(l.get(), event.otherEvent) == std::strong_ordering::greater) {
 		event.otherEvent->left = true;
 		l->left = false;
 	}
@@ -625,7 +547,8 @@ static void order_events(const std::vector<SweepEvent*>& sortedEvents, std::vect
 		for (size_t i = 0; i < resultEvents.size(); ++i) {
 			// FIXME: size() - 1?
 			// FIXME: compare() == 1, improve comparison
-			if ((i + 1) < resultEvents.size() && !CompareEvents{}(resultEvents[i], resultEvents[i + 1])) {
+			if ((i + 1) < resultEvents.size()
+					&& CompareEvents{}(resultEvents[i], resultEvents[i + 1]) == std::strong_ordering::greater) {
 				std::swap(resultEvents[i], resultEvents[i + 1]);
 				sorted = false;
 			}
@@ -740,8 +663,12 @@ static void deep_copy_shape(Polygon& dst, const Polygon& src) {
 	}
 }
 
-static float signed_area(const glm::vec2& p0, const glm::vec2& p1, const glm::vec2& p2) {
+float signed_area(const glm::vec2& p0, const glm::vec2& p1, const glm::vec2& p2) {
 	return (p0.x - p2.x) * (p1.y - p2.y) - (p1.x - p2.x) * (p0.y - p2.y);
+}
+
+bool AABB::operator==(const AABB& other) const {
+	return minX == other.minX && minY == other.minY && maxX == other.maxX && maxY == other.maxY;
 }
 
 bool AABB::intersects(const AABB& other) const {
@@ -766,42 +693,46 @@ bool SweepEvent::is_in_result() const {
 	return resultTransition != ResultTransition::NOT_IN_RESULT;
 }
 
-bool CompareEvents::operator()(const SweepEvent* a, const SweepEvent* b) const {
+std::strong_ordering CompareEvents::operator()(const SweepEvent* a, const SweepEvent* b) const {
 	// Different x coordinate
 	if (a->point.x > b->point.x) {
-		return false;
+		return std::strong_ordering::greater;
 	}
 	else if (a->point.x < b->point.x) {
-		return true;
+		return std::strong_ordering::less;
 	}
 
 	// Different points, but same x coordinate
 	if (a->point.y > b->point.y) {
-		return false;
+		return std::strong_ordering::greater;
 	}
 	else if (a->point.y < b->point.y) {
-		return true;
+		return std::strong_ordering::less;
 	}
 
 	// Special cases:
 	// 1. same coordinates, but one is a left endpoint and the other is a right endpoint. The right
 	// endpoint is processed first
 	if (a->left != b->left) {
-		return a->left;
+		return a->left ? std::strong_ordering::greater : std::strong_ordering::less;
 	}
 
 	// Same coordinates, both events are left endpoints or right endpoints, but not collinear
 	if (signed_area(a->point, a->otherEvent->point, b->otherEvent->point) != 0) {
 		// The event associated with the bottom segment is processed first
-		return a->is_below(b->otherEvent->point);
+		return a->is_below(b->otherEvent->point) ? std::strong_ordering::less : std::strong_ordering::greater;
 	}
 
-	return a->isSubject || !b->isSubject;
+	return (a->isSubject || !b->isSubject) ? std::strong_ordering::less : std::strong_ordering::greater;
 }
 
-bool CompareSegments::operator()(const SweepEvent* a, const SweepEvent* b) const {
+bool CompareEventsGreater::operator()(const SweepEvent* a, const SweepEvent* b) const {
+	return CompareEvents{}(a, b) == std::strong_ordering::greater;
+}
+
+std::strong_ordering CompareSegments::operator()(const SweepEvent* a, const SweepEvent* b) const {
 	if (a == b) {
-		return false;
+		return std::strong_ordering::equal;
 	}
 
 	// Segments are not collinear
@@ -809,41 +740,46 @@ bool CompareSegments::operator()(const SweepEvent* a, const SweepEvent* b) const
 			|| signed_area(a->point, a->otherEvent->point, b->otherEvent->point) != 0) {
 		// If they share their left endpoint use the right endpoint to sort
 		if (a->point == b->point) {
-			return a->is_below(b->otherEvent->point);
+			return a->is_below(b->otherEvent->point) ? std::strong_ordering::less
+					: std::strong_ordering::greater;
 		}
 
 		// Different left endpoint: use the left endpoint to sort
 		if (a->point.x == b->point.x) {
-			return a->point.y < b->point.y;
+			return a->point.y < b->point.y ? std::strong_ordering::less : std::strong_ordering::greater;
 		}
 
 		// Has the line segment associated with a been inserted into S after the line segment associated
 		// with b?
-		if (!CompareEvents{}(a, b)) {
-			return b->is_above(a->point);
+		if (CompareEvents{}(a, b) == std::strong_ordering::greater) {
+			return b->is_above(a->point) ? std::strong_ordering::less : std::strong_ordering::greater;
 		}
 
 		// The line segment associated with b has been inserted into S after the line segment associated
 		// with a
-		return a->is_below(b->point);
+		return a->is_below(b->point) ? std::strong_ordering::less : std::strong_ordering::greater;
 	}
 
 	// Same polygon
 	if (a->isSubject == b->isSubject) {
 		if (a->point == b->point) {
 			if (a->otherEvent->point == b->otherEvent->point) {
-				return false;
+				return std::strong_ordering::equal;
 			}
 
-			return a->contourID < b->contourID;
+			return a->contourID <= b->contourID ? std::strong_ordering::less : std::strong_ordering::greater;
 		}
 	}
 	// Segments are collinear but belong to separate polygons
 	else {
-		return a->isSubject;
+		return a->isSubject ? std::strong_ordering::less : std::strong_ordering::greater;
 	}
 
 	return CompareEvents{}(a, b);
+}
+
+bool CompareSegmentsLess::operator()(const SweepEvent* a, const SweepEvent* b) const {
+	return CompareSegments{}(a, b) == std::strong_ordering::less;
 }
 
 bool Contour::is_exterior() const {
