@@ -6,8 +6,6 @@
 
 #include <optional>
 #include <string>
-//#include <cmath>
-//#include <numbers>
 
 #include "svg.hpp"
 
@@ -76,6 +74,25 @@ static void debug_draw_lines(NVGcontext* vg, GPUPathData& shaderPathData, uint32
 static void draw_polygon(NVGcontext* vg, const Polygon& polygon, const glm::vec2& offset,
 		NVGcolor color);
 
+static void add_polygon_svg(std::vector<CPUQuadraticShape>& svgShapes, const Polygon& polygon,
+		uint32_t fillColor, const glm::vec2& polygonOffset) {
+	svgShapes.emplace_back();
+	auto& shape = svgShapes.back();
+	shape.fillColor = fillColor;
+
+	for (auto& subshape : polygon.subShapes) {
+		shape.paths.emplace_back();
+		auto& path = shape.paths.back();
+
+		path.points.emplace_back(subshape.points[0] + polygonOffset);
+
+		for (size_t i = 1; i < subshape.points.size(); ++i) {
+			path.points.emplace_back(subshape.points[i] + polygonOffset);
+			path.points.emplace_back(subshape.points[i] + polygonOffset);
+		}
+	}
+}
+
 int main() {
 	glfwInit();
 
@@ -117,10 +134,7 @@ int main() {
 	uint32_t shaderShapeCount = 0;
 
 	std::vector<CPUQuadraticShape> svgShapes;
-	svg_convert_to_quadratic_paths(svg, svgShapes);
-	convert_cpu_path_data_to_gpu(svgShapes, shaderPathData, shaderShapeCount);
-
-	glNamedBufferStorage(curveBuffer, sizeof(shaderPathData), &shaderPathData, GL_DYNAMIC_STORAGE_BIT);
+	//svg_convert_to_quadratic_paths(svg, svgShapes);
 
 	float res[] = {g_width, g_height};
 
@@ -143,6 +157,15 @@ int main() {
 	Polygon result{};
 	martinez_boolean(subject, clipping, result, BooleanOperation::INTERSECTION);
 
+	glm::vec2 polygonOffset{200, 300};
+
+	add_polygon_svg(svgShapes, subject, 0xFF008000u, polygonOffset);
+	add_polygon_svg(svgShapes, clipping, 0xFF008000u, polygonOffset);
+	add_polygon_svg(svgShapes, result, 0xFF0000FFu, polygonOffset);
+
+	convert_cpu_path_data_to_gpu(svgShapes, shaderPathData, shaderShapeCount);
+	glNamedBufferStorage(curveBuffer, sizeof(shaderPathData), &shaderPathData, GL_DYNAMIC_STORAGE_BIT);
+
 	while (!glfwWindowShouldClose(window)) {
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
@@ -162,10 +185,10 @@ int main() {
 		
 		nvgBeginFrame(vg, g_width, g_height, 1.0);
 
-		draw_polygon(vg, subject, {200, 300}, nvgRGBA(0, 255, 0, 255));
-		draw_polygon(vg, clipping, {200, 300}, nvgRGBA(0, 255, 0, 255));
-		draw_polygon(vg, result, {200, 300}, nvgRGBA(255, 0, 0, 255));
-
+		//draw_polygon(vg, subject, {200, 300}, nvgRGBA(0, 128, 0, 255));
+		//draw_polygon(vg, clipping, {200, 300}, nvgRGBA(0, 128, 0, 255));
+		//draw_polygon(vg, result, {200, 300}, nvgRGBA(255, 0, 0, 255));
+		
 		//debug_draw_lines(vg, shaderPathData, shaderShapeCount);
 
 		nvgEndFrame(vg);

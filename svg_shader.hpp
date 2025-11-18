@@ -111,8 +111,8 @@ float sdBezier(vec2 A, vec2 B, vec2 C, vec2 p)
     return dis;
 }
 
-vec2 solveQuadratic(float a, float b, float c) {
-	float det = b * b - 4.0 * a * c;
+dvec2 solveQuadratic(double a, double b, double c) {
+	/*float det = b * b - 4.0 * a * c;
 	float detSqrt = sqrt(det);
 	float rcp = 0.5 / a;
 	float bOver2A = b * rcp;
@@ -122,6 +122,18 @@ vec2 solveQuadratic(float a, float b, float c) {
 	}
 	else {
 		return vec2(2 * c / (-b + detSqrt), detSqrt * rcp - bOver2A);
+	}*/
+
+	double det = double(b) * double(b) - 4.0 * double(a) * double(c);
+	double detSqrt = sqrt(det);
+	double rcp = double(0.5) / double(a);
+	double bOver2A = double(b) * rcp;
+
+	if (b <= 0.0) {
+		return vec2(-detSqrt * rcp - bOver2A, 2.0 * double(c) / (-double(b) - detSqrt));
+	}
+	else {
+		return vec2(2.0 * double(c) / (-double(b) + detSqrt), detSqrt * rcp - bOver2A);
 	}
 }
 
@@ -210,30 +222,30 @@ float sdBezier2(in vec2 pos, in vec2 A, in vec2 B, in vec2 C, out vec2 outQ) {
 }
 
 int getIntersectCount(in vec2 P0, in vec2 P1, in vec2 P2, in vec2 p) {
-	float a = P0.y - 2.0 * P1.y + P2.y;
-	float b = 2.0 * (P1.y - P0.y);
-	float c = P0.y - p.y;
-	vec2 roots = solveQuadratic(a, b, c);
+	double a = double(P0.y) - 2.0 * double(P1.y) + double(P2.y);
+	double b = 2.0 * (double(P1.y) - double(P0.y));
+	double c = double(P0.y) - double(p.y);
+	dvec2 roots = solveQuadratic(a, b, c);
 	int intersectCount = 0;
 
 	if (roots[0] >= 0.0 && roots[0] <= 1.0) {
-		float t = roots[0];
-		float curveX = P0.x * (1.0 - t) * (1.0 - t)
-			+ 2.0 * P1.x * (1.0 - t) * t
-			+ P2.x * t * t;
+		double t = roots[0];
+		double curveX = double(P0.x) * (1.0 - t) * (1.0 - t)
+			+ 2.0 * double(P1.x) * (1.0 - t) * t
+			+ double(P2.x) * t * t;
 
-		if (p.x <= curveX) {
+		if (double(p.x) <= curveX) {
 			++intersectCount;
 		}
 	}
 
 	if (roots[1] >= 0.0 && roots[1] <= 1.0) {
-		float t = roots[1];
-		float curveX = P0.x * (1.0 - t) * (1.0 - t)
-			+ 2.0 * P1.x * (1.0 - t) * t
-			+ P2.x * t * t;
+		double t = roots[1];
+		double curveX = double(P0.x) * (1.0 - t) * (1.0 - t)
+			+ 2.0 * double(P1.x) * (1.0 - t) * t
+			+ double(P2.x) * t * t;
 
-		if (p.x <= curveX) {
+		if (double(p.x) <= curveX) {
 			++intersectCount;
 		}
 	}
@@ -242,7 +254,7 @@ int getIntersectCount(in vec2 P0, in vec2 P1, in vec2 P2, in vec2 p) {
 }
 
 vec4 colorShape(uint ishape, inout uint ip, inout uint i, uint pathEndIndex) {
-	vec2 p = gl_FragCoord.xy;
+	vec2 p = gl_FragCoord.xy * 0.75 + vec2(100, 50);
 
 	float minD = 1e10;
 	bool hasFill = fillColors[ishape] != 0;

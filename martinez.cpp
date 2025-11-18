@@ -8,6 +8,7 @@
 #include <cstdio>
 
 #include <glm/geometric.hpp>
+#include <glm/gtc/epsilon.hpp>
 
 static constexpr const AABB AABB_INVALID = {FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
 
@@ -15,25 +16,20 @@ static void process_polygon(EventQueue& queue, std::vector<std::unique_ptr<Sweep
 		const PolygonSubShape& contourOrHole, bool isSubject, AABB& bbox, bool isExteriorRing,
 		uint32_t contourID);
 
-static void subdivide_segments(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
-		std::vector<SweepEvent*>& sortedEvents, const Polygon& subject, const Polygon& clipping,
-		const AABB& sbbox, const AABB& cbbox, BooleanOperation operation);
-
 static void compute_fields(SweepEvent& event, SweepEvent* prev, BooleanOperation operation);
 static int possible_intersection(SweepEvent& a, SweepEvent& b, EventQueue& queue,
 		std::vector<std::unique_ptr<SweepEvent>>& eventOwner);
 static void divide_segment(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
 		SweepEvent& event, const glm::vec2& p);
 
-static void connect_edges(std::vector<SweepEvent*>& sortedEvents, std::vector<Contour>& contours,
-		BooleanOperation operation);
-static void order_events(const std::vector<SweepEvent*>& sortedEvents, std::vector<SweepEvent*>& resultEvents);
 static Contour& initialize_contour_from_context(std::vector<Contour>& contours, const SweepEvent& event,
 		uint32_t contourID);
-static size_t next_pos(size_t pos, const std::vector<SweepEvent*>& resultEvents,
-		const std::vector<bool>& processed, size_t origPos);
 
 static float cross(const glm::vec2& a, const glm::vec2& b);
+
+static bool point_equals(const glm::vec2& a, const glm::vec2& b) {
+	return glm::any(glm::epsilonEqual(a, b, 1e-4f));
+}
 
 static void deep_copy_shape(Polygon& dst, const Polygon& src);
 
@@ -136,6 +132,7 @@ static void process_polygon(EventQueue& queue, std::vector<std::unique_ptr<Sweep
 		e1->otherEvent = e2.get();
 
 		// Skip collapsed edges or it breaks
+		// NOTE: Candidate for epsilonEqual
 		if (s1.x == s2.x && s1.y == s2.y) {
 			continue;
 		}
@@ -161,7 +158,7 @@ static void process_polygon(EventQueue& queue, std::vector<std::unique_ptr<Sweep
 	}
 }
 
-static void subdivide_segments(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
+void subdivide_segments(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
 		std::vector<SweepEvent*>& sortedEvents, const Polygon& subject, const Polygon& clipping,
 		const AABB& sbbox, const AABB& cbbox, BooleanOperation operation) {
 	using Node = std::multiset<SweepEvent*, CompareSegments>::iterator;
@@ -179,7 +176,7 @@ static void subdivide_segments(EventQueue& queue, std::vector<std::unique_ptr<Sw
 		sortedEvents.emplace_back(event);
 
 		if ((operation == BooleanOperation::INTERSECTION && event->point.x > rightBound)
-				|| (operation == BooleanOperation::DIFFERENCE && event->point.x > sbbox.minX)) {
+				|| (operation == BooleanOperation::DIFFERENCE && event->point.x > sbbox.maxX)) {
 			break;
 		}
 
@@ -253,6 +250,8 @@ static bool compute_in_result(const SweepEvent& event, BooleanOperation operatio
 				case BooleanOperation::XOR:
 					return true;
 			}
+
+			std::unreachable();
 		case EdgeType::SAME_TRANSITION:
 			return operation == BooleanOperation::INTERSECTION || operation == BooleanOperation::UNION;
 		case EdgeType::DIFFERENT_TRANSITION:
@@ -398,6 +397,7 @@ static int possible_intersection(SweepEvent& a, SweepEvent& b, EventQueue& queue
 		bool leftCoincide = false;
 		bool rightCoincide = false;
 
+		// NOTE: Candidate for epsilonEqual
 		if (a.point == b.point) {
 			leftCoincide = true; // linked
 		}
@@ -464,6 +464,7 @@ static void divide_segment(EventQueue& queue, std::vector<std::unique_ptr<SweepE
 	auto l = std::make_unique<SweepEvent>(p, event.otherEvent, event.contourID, EdgeType::NORMAL, true,
 			event.isSubject);
 
+	// NOTE: Candidate for epsilonEqual
 	if (event.point == event.otherEvent->point) {
 		printf("Warning: maybe collapsed segment? %u\n", event.contourID);
 	}
@@ -484,7 +485,7 @@ static void divide_segment(EventQueue& queue, std::vector<std::unique_ptr<SweepE
 	eventOwner.emplace_back(std::move(r));
 }
 
-static void connect_edges(std::vector<SweepEvent*>& sortedEvents, std::vector<Contour>& contours,
+void connect_edges(std::vector<SweepEvent*>& sortedEvents, std::vector<Contour>& contours,
 		BooleanOperation operation) {
 	std::vector<SweepEvent*> resultEvents;
 	order_events(sortedEvents, resultEvents);
@@ -508,31 +509,25 @@ static void connect_edges(std::vector<SweepEvent*>& sortedEvents, std::vector<Co
 
 		for (;;) {
 			processed[pos] = true;
-
-			if (pos < resultEvents.size() && resultEvents[pos]) {
-				resultEvents[pos]->outputContourID = contourID;
-			}
+			resultEvents[pos]->outputContourID = contourID;
 
 			pos = resultEvents[pos]->otherPos;
 
 			processed[pos] = true;
-
-			if (pos < resultEvents.size() && resultEvents[pos]) {
-				resultEvents[pos]->outputContourID = contourID;
-			}
+			resultEvents[pos]->outputContourID = contourID;
 
 			contour.points.emplace_back(resultEvents[pos]->point);
 
 			pos = next_pos(pos, resultEvents, processed, origPos);
 
-			if (pos == origPos || pos >= resultEvents.size() || !resultEvents[pos]) {
+			if (pos == origPos || pos >= resultEvents.size()) {
 				break;
 			}
 		}
 	}
 }
 
-static void order_events(const std::vector<SweepEvent*>& sortedEvents, std::vector<SweepEvent*>& resultEvents) {
+void order_events(const std::vector<SweepEvent*>& sortedEvents, std::vector<SweepEvent*>& resultEvents) {
 	for (auto* event : sortedEvents) {
 		if ((event->left && event->is_in_result()) || (!event->left && event->otherEvent->is_in_result())) {
 			resultEvents.emplace_back(event);
@@ -546,7 +541,6 @@ static void order_events(const std::vector<SweepEvent*>& sortedEvents, std::vect
 
 		for (size_t i = 0; i < resultEvents.size(); ++i) {
 			// FIXME: size() - 1?
-			// FIXME: compare() == 1, improve comparison
 			if ((i + 1) < resultEvents.size()
 					&& CompareEvents{}(resultEvents[i], resultEvents[i + 1]) == std::strong_ordering::greater) {
 				std::swap(resultEvents[i], resultEvents[i + 1]);
@@ -620,15 +614,15 @@ static Contour& initialize_contour_from_context(std::vector<Contour>& contours, 
 	return contour;
 }
 
-static size_t next_pos(size_t pos, const std::vector<SweepEvent*>& resultEvents,
-		const std::vector<bool>& processed, size_t origPos) {
+size_t next_pos(size_t pos, const std::vector<SweepEvent*>& resultEvents, const std::vector<bool>& processed,
+		size_t origPos) {
 	auto newPos = pos + 1;
 	auto p = resultEvents[pos]->point;
 
 	if (newPos < resultEvents.size()) {
 		auto p1 = resultEvents[newPos]->point;
 
-		while (newPos < resultEvents.size() && p == p1) {
+		while (newPos < resultEvents.size() && point_equals(p, p1)) {
 			if (!processed[newPos]) {
 				return newPos;
 			}
@@ -739,6 +733,7 @@ std::strong_ordering CompareSegments::operator()(const SweepEvent* a, const Swee
 	if (signed_area(a->point, a->otherEvent->point, b->point) != 0
 			|| signed_area(a->point, a->otherEvent->point, b->otherEvent->point) != 0) {
 		// If they share their left endpoint use the right endpoint to sort
+		// NOTE: Candidate for epsilonEqual
 		if (a->point == b->point) {
 			return a->is_below(b->otherEvent->point) ? std::strong_ordering::less
 					: std::strong_ordering::greater;
@@ -762,7 +757,9 @@ std::strong_ordering CompareSegments::operator()(const SweepEvent* a, const Swee
 
 	// Same polygon
 	if (a->isSubject == b->isSubject) {
+		// NOTE: Candidate for epsilonEqual
 		if (a->point == b->point) {
+			// NOTE: Candidate for epsilonEqual
 			if (a->otherEvent->point == b->otherEvent->point) {
 				return std::strong_ordering::equal;
 			}

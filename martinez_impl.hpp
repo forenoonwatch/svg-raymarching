@@ -88,5 +88,13 @@ struct Contour {
 
 void fill_queue(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
 		const Polygon& subject, const Polygon& clipping, AABB& sbbox, AABB& cbbox, BooleanOperation operation);
+void subdivide_segments(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
+		std::vector<SweepEvent*>& sortedEvents, const Polygon& subject, const Polygon& clipping,
+		const AABB& sbbox, const AABB& cbbox, BooleanOperation operation);
+void connect_edges(std::vector<SweepEvent*>& sortedEvents, std::vector<Contour>& contours,
+		BooleanOperation operation);
+void order_events(const std::vector<SweepEvent*>& sortedEvents, std::vector<SweepEvent*>& resultEvents);
+size_t next_pos(size_t pos, const std::vector<SweepEvent*>& resultEvents, const std::vector<bool>& processed,
+		size_t origPos);
 
 float signed_area(const glm::vec2& p0, const glm::vec2& p1, const glm::vec2& p2);
