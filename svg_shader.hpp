@@ -254,7 +254,8 @@ int getIntersectCount(in vec2 P0, in vec2 P1, in vec2 P2, in vec2 p) {
 }
 
 vec4 colorShape(uint ishape, inout uint ip, inout uint i, uint pathEndIndex) {
-	vec2 p = gl_FragCoord.xy * 0.75 + vec2(100, 50);
+	//vec2 p = gl_FragCoord.xy * 0.75 + vec2(100, 50);
+	vec2 p = gl_FragCoord.xy;
 
 	float minD = 1e10;
 	bool hasFill = fillColors[ishape] != 0;

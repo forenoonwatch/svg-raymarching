@@ -18,6 +18,7 @@ set_target_properties(raymarch PROPERTIES
 target_link_libraries(raymarch PRIVATE glfw glad glm::glm nanovg nanosvg)
 
 target_sources(raymarch PRIVATE
+	"${CMAKE_CURRENT_SOURCE_DIR}/hatch.cpp"
 	"${CMAKE_CURRENT_SOURCE_DIR}/martinez.cpp"
 	"${CMAKE_CURRENT_SOURCE_DIR}/shader.cpp"
 	"${CMAKE_CURRENT_SOURCE_DIR}/svg.cpp"

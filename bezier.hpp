@@ -44,6 +44,14 @@ struct QuadraticBezier {
 			+ P2 * t * t;
 	}
 
+	vec2 derivative(float_t t) const {
+		auto tangentAtStart = float_t(2.0) * (P1 - P0);
+		auto tangentAtEnd = float_t(2.0) * (P2 - P1);
+		auto tangent = (float_t(1.0) - t) * tangentAtStart + t * tangentAtEnd;
+
+		return tangent;
+	}
+
 	float_t calc_y_at_x(float_t x) const {
 		auto a = P0.x - float_t(2.0) * P1.x + P2.x;
 		auto b = float_t(2.0) * (P1.x - P0.x);
@@ -84,4 +92,94 @@ struct QuadraticBezier {
 
 		return {boxMin, boxMax};
 	}
+
+	QuadraticBezier split_from_start(float_t t) const {
+		return {
+			.P0 = P0,
+			.P1 = (float_t(1.0) - t) * P0 + t * P1,
+			.P2 = (float_t(1.0) - t) * ((float_t(1.0) - t) * P0 + t * P1)
+				+ t * ((float_t(1.0) - t) * P1 + t * P2),
+		};
+	}
+
+	QuadraticBezier split_to_end(float_t t) const {
+		return {
+			.P0 = (float_t(1.0) - t) * ((float_t(1.0) - t) * P0 + t * P1)
+					+ t * ((float_t(1.0) - t) * P1  + t * P2),
+			.P1 = (float_t(1.0) - t) * P1 + t * P2,
+			.P2 = P2,
+		};
+	}
+
+	QuadraticBezier split_from_min_to_max(float_t minT, float_t maxT) const {
+		return split_from_start(maxT).split_to_end(minT / maxT);
+	}
 };
+
+template <typename float_t>
+EqQuartic<float_t> get_bezier_bezier_intersection_equation(const QuadraticBezier<float_t>& lhs,
+		const QuadraticBezier<float_t>& rhs) {
+	// Algorithm based on Computer Aided Geometric Design: 
+    // https://scholarsarchive.byu.edu/cgi/viewcontent.cgi?article=1000&context=facpub#page99
+    // Chapter 17.6 describes the implicitization of a curve, which transforms it into the following format:
+    // ax^2 + bxy + cy^2 + dx + ey + f = 0 
+    // the coefficients a-f above are k0-k5 below 
+    // 
+    // We then substitute x and y for the other curve's quadratic formulas.
+    // This gives us a quartic equation of the form:
+    // at^4 + bt^3 + ct^2 + dt + e = 0
+    // the coefficients a-e above are a-e below 
+    // 
+    // The roots for t then become our intersections points between both curves.
+    //
+    // A Desmos page including math for this as well as some of the graphs it generates is available here:
+    // https://www.desmos.com/calculator/mjwqvnvyb8?lang=pt-BR
+
+    // for convenience
+    auto p0x = rhs.P0.x;
+    auto p1x = rhs.P1.x;
+    auto p2x = rhs.P2.x;
+    auto p0y = rhs.P0.y;
+    auto p1y = rhs.P1.y;
+    auto p2y = rhs.P2.y;
+
+    // Implicitize other curve
+    auto k0 = (4 * p0y * p1y) - (4 * p0y * p2y) - (4 * (p1y * p1y)) + (4 * p1y * p2y) - ((p0y * p0y))
+			+ (2 * p0y * p2y) - ((p2y * p2y));
+    auto k1 = -(4 * p0x * p1y) + (4 * p0x * p2y) - (4 * p1x * p0y) + (8 * p1x * p1y) - (4 * p1x * p2y)
+			+ (4 * p2x * p0y) - (4 * p2x * p1y) + (2 * p0x * p0y) - (2 * p0x * p2y) - (2 * p2x * p0y)
+			+ (2 * p2x * p2y);
+    auto k2 = (4 * p0x * p1x) - (4 * p0x * p2x) - (4 * (p1x * p1x)) + (4 * p1x * p2x) - ((p0x * p0x))
+			+ (2 * p0x * p2x) - ((p2x * p2x));
+    auto k3 = (4 * p0x * (p1y * p1y)) - (4 * p0x * p1y * p2y) - (4 * p1x * p0y * p1y) + (8 * p1x * p0y * p2y)
+			- (4 * p1x * p1y * p2y) - (4 * p2x * p0y * p1y) + (4 * p2x * (p1y * p1y)) - (2 * p0x * p0y * p2y)
+			+ (2 * p0x * (p2y * p2y)) + (2 * p2x * (p0y * p0y)) - (2 * p2x * p0y * p2y);
+    auto k4 = -(4 * p0x * p1x * p1y) - (4 * p0x * p1x * p2y) + (8 * p0x * p2x * p1y) + (4 * (p1x * p1x) * p0y)
+			+ (4 * (p1x * p1x) * p2y) - (4 * p1x * p2x * p0y) - (4 * p1x * p2x * p1y) + (2 * (p0x * p0x) * p2y)
+			- (2 * p0x * p2x * p0y) - (2 * p0x * p2x * p2y) + (2 * (p2x * p2x) * p0y);
+    auto k5 = (4 * p0x * p1x * p1y * p2y) - (4 * (p1x * p1x) * p0y * p2y) + (4 * p1x * p2x * p0y * p1y)
+			- ((p0x * p0x) * (p2y * p2y)) + (2 * p0x * p2x * p0y * p2y) - ((p2x * p2x) * (p0y * p0y))
+			- (4 * p0x * p2x * (p1y * p1y));
+        
+    auto quadratic = QuadraticCurve<float_t>::from_bezier(lhs.P0, lhs.P1, lhs.P2);
+    // for convenience
+	glm::vec<2, double> A = quadratic.A;
+	glm::vec<2, double> B = quadratic.B;
+	glm::vec<2, double> C = quadratic.C;
+
+    // substitute parametric into implicit equation:
+        
+    // Getting the quartic params
+    double a = ((A.x * A.x) * k0) + (A.x * A.y * k1) + (A.y * A.y * k2);
+    double b = (A.x * B.x * k0 * float_t(2.0)) + (A.x * B.y * k1) + (B.x * A.y * k1)
+			+ (A.y * B.y * k2 * float_t(2.0));
+    double c = (A.x * C.x * k0 * float_t(2.0)) + (A.x * C.y * k1) + (A.x * k3) + ((B.x * B.x) * k0)
+			+ (B.x * B.y * k1) + (C.x * A.y * k1) + (A.y * C.y * k2 * float_t(2.0)) + (A.y * k4)
+			+ ((B.y * B.y) * k2);
+    double d = (B.x * C.x * k0 * float_t(2.0)) + (B.x * C.y * k1) + (B.x * k3) + (C.x * B.y * k1)
+			+ (B.y * C.y * k2 * float_t(2.0)) + (B.y * k4);
+    double e = ((C.x * C.x) * k0) + (C.x * C.y * k1) + (C.x * k3) + ((C.y * C.y) * k2) + (C.y * k4) + (k5);
+
+    return EqQuartic<float_t>{static_cast<float_t>(a), static_cast<float_t>(b), static_cast<float_t>(c),
+			static_cast<float_t>(d), static_cast<float_t>(e)};
+}

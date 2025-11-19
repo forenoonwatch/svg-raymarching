@@ -20,6 +20,7 @@
 #include "shader.hpp"
 #include "svg_shader.hpp"
 
+#include "hatch.hpp"
 #include "martinez.hpp"
 
 static constexpr const char* g_lineVertex = R"(
@@ -159,9 +160,14 @@ int main() {
 
 	glm::vec2 polygonOffset{200, 300};
 
-	add_polygon_svg(svgShapes, subject, 0xFF008000u, polygonOffset);
-	add_polygon_svg(svgShapes, clipping, 0xFF008000u, polygonOffset);
+	//add_polygon_svg(svgShapes, subject, 0xFF008000u, polygonOffset);
+	//add_polygon_svg(svgShapes, clipping, 0xFF008000u, polygonOffset);
 	add_polygon_svg(svgShapes, result, 0xFF0000FFu, polygonOffset);
+	
+	std::vector<CurveHatchBox> hatchBoxes;
+	generate_hatch_boxes(svgShapes[0], hatchBoxes);
+
+	printf("Generated %llu hatch boxes\n", hatchBoxes.size());
 
 	convert_cpu_path_data_to_gpu(svgShapes, shaderPathData, shaderShapeCount);
 	glNamedBufferStorage(curveBuffer, sizeof(shaderPathData), &shaderPathData, GL_DYNAMIC_STORAGE_BIT);
@@ -184,6 +190,40 @@ int main() {
 		}
 		
 		nvgBeginFrame(vg, g_width, g_height, 1.0);
+
+		for (auto& box : hatchBoxes) {
+			/*nvgBeginPath(vg);
+			nvgMoveTo(vg, box.aabbMin.x, box.aabbMin.y);
+			nvgLineTo(vg, box.aabbMax.x, box.aabbMin.y);
+			nvgLineTo(vg, box.aabbMax.x, box.aabbMax.y);
+			nvgLineTo(vg, box.aabbMin.x, box.aabbMax.y);
+			nvgClosePath(vg);
+
+			nvgFillColor(vg, nvgRGBA(255, 0, 0, 128));
+			nvgFill(vg);*/
+
+			auto p0 = box.curveMin[0] * (box.aabbMax - box.aabbMin) + box.aabbMin;
+			auto p1 = box.curveMin[1] * (box.aabbMax - box.aabbMin) + box.aabbMin;
+			auto p2 = box.curveMin[2] * (box.aabbMax - box.aabbMin) + box.aabbMin;
+
+			nvgBeginPath(vg);
+			nvgMoveTo(vg, p0.x, p0.y);
+			nvgQuadTo(vg, p1.x, p1.y, p2.x, p2.y);
+			nvgStrokeColor(vg, nvgRGBA(0, 0, 255, 255));
+			nvgStrokeWidth(vg, 2.f);
+			nvgStroke(vg);
+
+			p0 = box.curveMax[0] * (box.aabbMax - box.aabbMin) + box.aabbMin;
+			p1 = box.curveMax[1] * (box.aabbMax - box.aabbMin) + box.aabbMin;
+			p2 = box.curveMax[2] * (box.aabbMax - box.aabbMin) + box.aabbMin;
+
+			nvgBeginPath(vg);
+			nvgMoveTo(vg, p0.x, p0.y);
+			nvgQuadTo(vg, p1.x, p1.y, p2.x, p2.y);
+			nvgStrokeColor(vg, nvgRGBA(0, 0, 255, 255));
+			nvgStrokeWidth(vg, 2.f);
+			nvgStroke(vg);
+		}
 
 		//draw_polygon(vg, subject, {200, 300}, nvgRGBA(0, 128, 0, 255));
 		//draw_polygon(vg, clipping, {200, 300}, nvgRGBA(0, 128, 0, 255));
