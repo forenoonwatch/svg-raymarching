@@ -24,11 +24,11 @@ struct Segment {
 	bool is_straight_line_constant_major() const;
 };
 
-//constexpr const MajorAxis SELECTED_MAJOR_AXIS = MajorAxis::MAJOR_Y;
-//constexpr const MajorAxis SELECTED_MINOR_AXIS = MajorAxis::MAJOR_X;
+constexpr const MajorAxis SELECTED_MAJOR_AXIS = MajorAxis::MAJOR_Y;
+constexpr const MajorAxis SELECTED_MINOR_AXIS = MajorAxis::MAJOR_X;
 
-constexpr const MajorAxis SELECTED_MAJOR_AXIS = MajorAxis::MAJOR_X;
-constexpr const MajorAxis SELECTED_MINOR_AXIS = MajorAxis::MAJOR_Y;
+//constexpr const MajorAxis SELECTED_MAJOR_AXIS = MajorAxis::MAJOR_X;
+//constexpr const MajorAxis SELECTED_MINOR_AXIS = MajorAxis::MAJOR_Y;
 
 constexpr real_t MINOR_POSITION_COMPARISON_THRESHOLD = real_t(1e-3);
 constexpr real_t TANGENT_COMPARISON_THRESHOLD = real_t(1e-7);

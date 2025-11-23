@@ -6,6 +6,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <cstdio>
 
 #include <algorithm>
 #include <limits>
@@ -45,9 +46,9 @@ void generate_hatch_boxes(const CPUQuadraticShape& shape, std::vector<CurveHatch
 			assert(outputBezier.P0[major] <= outputBezier.P2[major]);
 		}
 
-		// Fix in case of small precision issues when splitting into majro monotonic segments
-		if (outputBezier.P1.y < outputBezier.P0.y) {
-			outputBezier.P1.y = outputBezier.P0.y;
+		// Fix in case of small precision issues when splitting into major monotonic segments
+		if (outputBezier.P1[major] < outputBezier.P0[major]) {
+			outputBezier.P1[major] = outputBezier.P0[major];
 		}
 
 		beziers.emplace_back(std::move(outputBezier));
@@ -268,7 +269,7 @@ bool Hatch::split_into_major_monotonic_segments(const QuadraticBezier<real_t>& b
 	// Finding roots for the quadratic bezier derivatives (a straight line)
 	auto t = -b / (real_t(2.0) * a);
 
-	if (t <= real_t(0.0) || t >= real_t(1.0)) {
+	if (std::isnan(t) || t <= real_t(0.0) || t >= real_t(1.0)) {
 		return true;
 	}
 

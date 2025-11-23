@@ -33,10 +33,14 @@ struct SweepEvent {
 	SweepEvent* prevInResult{nullptr};
 	ResultTransition resultTransition{ResultTransition::NOT_IN_RESULT};
 
+	size_t otherPos;
+	uint32_t outputContourID;
+
 	bool is_below(const glm::vec2& p) const;
 	bool is_above(const glm::vec2& p) const;
 
 	bool is_vertical() const;
+	bool is_in_result() const;
 };
 
 struct CompareEvents {
@@ -57,11 +61,25 @@ struct CompareSegmentsLess {
 
 using EventQueue = std::priority_queue<SweepEvent*, std::vector<SweepEvent*>, CompareEventsGreater>;
 
+struct Contour {
+	std::vector<glm::vec<2, real_t>> points;
+	std::vector<uint32_t> holeIDs;
+	uint32_t holeOf{~0u};
+	uint32_t depth{};
+
+	bool is_exterior() const;
+};
+
 void fill_queue(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
 		const CPUQuadraticShape& subject, const CPUQuadraticShape& clipping, BooleanOperation operation);
 void subdivide_segments(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
 		std::vector<SweepEvent*>& sortedEvents, const CPUQuadraticShape& subject,
 		const CPUQuadraticShape& clipping, BooleanOperation operation);
+void connect_edges(std::vector<SweepEvent*>& sortedEvents, std::vector<Contour>& contours,
+		BooleanOperation operation);
+void order_events(const std::vector<SweepEvent*>& sortedEvents, std::vector<SweepEvent*>& resultEvents);
+size_t next_pos(size_t pos, const std::vector<SweepEvent*>& resultEvents, const std::vector<bool>& processed,
+		size_t origPos);
 
 void compute_fields(SweepEvent& event, SweepEvent* prev, BooleanOperation operation);
 
