@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstring>
+#include <cfloat>
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -19,9 +20,19 @@
 
 #include "shader.hpp"
 #include "svg_shader.hpp"
+#include "hatch_shader.hpp"
 
 #include "hatch.hpp"
 #include "martinez.hpp"
+
+#include <algorithm>
+#include <memory>
+#include <queue>
+#include <set>
+#include <glm/geometric.hpp>
+#include "hatch_impl.hpp"
+#include "martinez_impl.hpp"
+#include "bezier_martinez_impl.hpp"
 
 static constexpr const char* g_lineVertex = R"(
 #version 460
@@ -88,10 +99,77 @@ static void add_polygon_svg(std::vector<CPUQuadraticShape>& svgShapes, const Pol
 		path.points.emplace_back(subshape.points[0] + polygonOffset);
 
 		for (size_t i = 1; i < subshape.points.size(); ++i) {
+			//path.points.emplace_back((subshape.points[i - 1] + subshape.points[i]) * 0.5f + polygonOffset);
 			path.points.emplace_back(subshape.points[i] + polygonOffset);
 			path.points.emplace_back(subshape.points[i] + polygonOffset);
 		}
 	}
+}
+
+static glm::vec2 controlPoints[] = {
+	{50, 50}, {100, 100}, {50, 150},
+	{250, 50}, {300, 100}, {350, 150},
+};
+static glm::vec2* selectedPoint = nullptr;
+
+static void on_mouse_button_event(GLFWwindow* window, int button, int action, int mods);
+static void on_mouse_move_event(GLFWwindow* window, double xPos, double yPos);
+static void on_key_event(GLFWwindow* window, int key, int scancode, int action, int mods);
+
+int g_step = 0;
+
+struct SegmentComp {
+	bool operator()(const BezierMartinez::SweepEvent* a, const BezierMartinez::SweepEvent* b) const {
+		/*if (a->point == b->point) {
+			return a->is_below(b->otherEvent->point);
+		}
+
+		if (a->point.y == b->point.y) {
+			return a->point.x < b->point.x;
+		}
+
+		if (!MyEventComparator{}(a, b)) {
+			return b->is_above(a->point);
+		}
+
+		return a->is_below(b->point);*/
+
+		Hatch::Segment segA{.originalBezier = &a->bezier, .tStart = a->t, .tEnd = a->otherEvent->t};
+		Hatch::Segment segB{.originalBezier = &b->bezier, .tStart = b->t, .tEnd = b->otherEvent->t};
+
+		return Hatch::SegmentLess{}(segA, segB);
+	}
+};
+
+static Polygon quad_shape_to_polygon(const CPUQuadraticShape& shape) {
+	Polygon poly;
+
+	for (auto& path : shape.paths) {
+		poly.subShapes.emplace_back();
+		auto& subshape = poly.subShapes.back();
+
+		for (size_t i = 0; i < path.points.size() - 1; i += 2) {
+			QuadraticBezier<Hatch::real_t> bezier{path.points[i], path.points[i + 1], path.points[i + 2]};
+			auto quadratic = QuadraticCurve<double>::from_bezier(bezier.P0, bezier.P1, bezier.P2);
+			auto t = -quadratic.B / (2.0 * quadratic.A);
+
+			if (i == 0) {
+				subshape.points.emplace_back(path.points[i]);
+			}
+
+			if (t.x > 0 && t.x < 1.0 && (t.x == t.y || t.y <= 0 || t.y > 1.0)) {
+				subshape.points.emplace_back(bezier.evaluate(t.x));
+			}
+
+			if (t.y > 0 && t.y < 1.0 && t.x != t.y) {
+				subshape.points.emplace_back(bezier.evaluate(t.y));
+			}
+
+			subshape.points.emplace_back(path.points[i + 2]);
+		}
+	}
+
+	return poly;
 }
 
 int main() {
@@ -103,6 +181,10 @@ int main() {
 	glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 	auto* window = glfwCreateWindow(g_width, g_height, "Jong", nullptr, nullptr);
 
+	glfwSetMouseButtonCallback(window, on_mouse_button_event);
+	glfwSetCursorPosCallback(window, on_mouse_move_event);
+	glfwSetKeyCallback(window, on_key_event);
+
 	glfwMakeContextCurrent(window);
 	gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress));
 
@@ -111,7 +193,7 @@ int main() {
 
 	auto* vg = nvgCreateGL3(NVG_DEBUG);
 
-	auto svgData = file_read_bytes("../third_party/riichi-mahjong-tiles/Regular/Chun.svg");
+	auto svgData = file_read_bytes("../third_party/riichi-mahjong-tiles/Regular/Ton.svg");
 	Scene svg;
 
 	if (svgData) {
@@ -127,6 +209,7 @@ int main() {
 	glCreateVertexArrays(1, &vao);
 
 	auto fstShader = Shader::load(g_svgVertex, g_svgFragment);
+	auto hatchShader = Shader::load(g_hatchVertex, g_hatchFragment);
 
 	unsigned curveBuffer;
 	glCreateBuffers(1, &curveBuffer);
@@ -141,7 +224,7 @@ int main() {
 
 	float counter = 0.f;
 
-	Polygon subject{
+	/*Polygon subject{
 		.subShapes = {
 			{.points = {{6, 43}, {-1.5f, -198}, {248, -199.5f}, {252.5f, 42.5f}, {6, 43}}},
 			{.points = {{57.5f, 1.5f}, {50.5f, -149}, {210, -150.5f}, {213, 3}, {57.5f, 1.5f}}},
@@ -156,23 +239,32 @@ int main() {
 	};
 
 	Polygon result{};
-	martinez_boolean(subject, clipping, result, BooleanOperation::INTERSECTION);
+	martinez_boolean(subject, clipping, result, BooleanOperation::DIFFERENCE);*/
 
 	glm::vec2 polygonOffset{200, 300};
 
 	//add_polygon_svg(svgShapes, subject, 0xFF008000u, polygonOffset);
 	//add_polygon_svg(svgShapes, clipping, 0xFF008000u, polygonOffset);
-	add_polygon_svg(svgShapes, result, 0xFF0000FFu, polygonOffset);
+	//add_polygon_svg(svgShapes, result, 0xFF0000FFu, polygonOffset);
 	
 	std::vector<CurveHatchBox> hatchBoxes;
-	generate_hatch_boxes(svgShapes[0], hatchBoxes);
+
+	for (auto& shape : svgShapes) {
+		//generate_hatch_boxes(shape, hatchBoxes);
+	}
 
 	printf("Generated %llu hatch boxes\n", hatchBoxes.size());
 
-	convert_cpu_path_data_to_gpu(svgShapes, shaderPathData, shaderShapeCount);
+	//convert_cpu_path_data_to_gpu(svgShapes, shaderPathData, shaderShapeCount);
 	glNamedBufferStorage(curveBuffer, sizeof(shaderPathData), &shaderPathData, GL_DYNAMIC_STORAGE_BIT);
 
+	auto lastTime = glfwGetTime();
+
 	while (!glfwWindowShouldClose(window)) {
+		auto currTime = glfwGetTime();
+		auto deltaTime = static_cast<float>(currTime - lastTime);
+		lastTime = currTime;
+
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
 		glBindVertexArray(vao);
@@ -188,10 +280,272 @@ int main() {
 
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 		}
+
+		float invScreenSize[] = {1.f / g_width, 1.f / g_height};
+
+		counter += deltaTime;
+
+		int major = static_cast<int>(Hatch::SELECTED_MAJOR_AXIS);
+		int minor = 1 - major;
+
+		CPUQuadraticShape subj{
+			.paths = {
+				{.points = {
+					{100, 100}, {150, 75}, {200, 100}, {225, 150}, {200, 200},
+					{150, 225}, {100, 200}, {75, 150}, {100, 100},
+				}}
+			},
+		};
+
+		CPUQuadraticShape clip{
+			.paths = {
+				{.points = {
+					{100 + 25, 100 + 25}, {150 + 25, 75 + 25}, {200 + 25, 100 + 25},
+					{225 + 25, 150 + 25}, {200 + 25, 200 + 25},
+					{150 + 25, 225 + 25}, {100 + 25, 200 + 25}, {75 + 25, 150 + 25},
+					{100 + 25, 100 + 25},
+				}}
+			},
+		};
+
+		Polygon polySubj = quad_shape_to_polygon(subj);
+		Polygon polyClip = quad_shape_to_polygon(clip);
+
+		std::vector<std::unique_ptr<Martinez::SweepEvent>> polyEvents;
+		std::vector<Martinez::SweepEvent*> sortedPolyEvents;
+
+		Polygon polyRes;
+		martinez_boolean(polySubj, polyClip, polyRes, BooleanOperation::UNION);
+
+		{
+			Martinez::AABB sbbox{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+			Martinez::AABB cbbox{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+
+			Martinez::EventQueue polyQueue;
+			Martinez::fill_queue(polyQueue, polyEvents, polySubj, polyClip, sbbox, cbbox,
+					BooleanOperation::UNION);
+
+			Martinez::subdivide_segments(polyQueue, polyEvents, sortedPolyEvents, polySubj, polyClip,
+					sbbox, cbbox, BooleanOperation::UNION);
+		}
+
+		std::vector<std::unique_ptr<BezierMartinez::SweepEvent>> ownedEvents;
+		BezierMartinez::EventQueue eventQueue;
+
+		BezierMartinez::fill_queue(eventQueue, ownedEvents, subj, clip, BooleanOperation::INTERSECTION);
+
+		std::vector<glm::vec2> visualizedIntersections;
+		BezierMartinez::SweepEvent* lastComparedA = nullptr, *lastComparedB = nullptr;
+
+		auto applyIntersection = [&](const QuadraticBezier<double>& bezier, double point,
+				const glm::vec<2, double>& p, BezierMartinez::SweepEvent*& lastSplitLeft,
+				BezierMartinez::SweepEvent* lastSplitRight) {
+				auto r = std::make_unique<BezierMartinez::SweepEvent>(p, point, bezier, lastSplitLeft,
+						lastSplitLeft->contourID, false, lastSplitLeft->isSubject);
+				auto l = std::make_unique<BezierMartinez::SweepEvent>(p, point, bezier, lastSplitRight,
+						lastSplitLeft->contourID, true, lastSplitLeft->isSubject);
+
+				if (BezierMartinez::CompareEvents{}(l.get(), lastSplitLeft->otherEvent)
+						== std::strong_ordering::greater) {
+					lastSplitLeft->otherEvent->left = true;
+					l->left = false;
+				}
+
+				lastSplitLeft->otherEvent->otherEvent = l.get();
+				lastSplitLeft->otherEvent = r.get();
+
+				lastSplitLeft = l.get();
+
+				eventQueue.push(l.get());
+				eventQueue.push(r.get());
+
+				ownedEvents.emplace_back(std::move(l));
+				ownedEvents.emplace_back(std::move(r));
+		};
+
+		auto checkIntersection = [&](BezierMartinez::SweepEvent& a, BezierMartinez::SweepEvent& b) {
+			lastComparedA = &a;
+			lastComparedB = &b;
+
+			Hatch::Segment segA{.originalBezier = &a.bezier, .tStart = a.t, .tEnd = a.otherEvent->t};
+			Hatch::Segment segB{.originalBezier = &b.bezier, .tStart = b.t, .tEnd = b.otherEvent->t};
+
+			auto intersections = segA.intersect(segB);
+
+			auto* lastLeftA = &a;
+			auto* lastRightA = a.otherEvent;
+			auto* lastLeftB = &b;
+			auto* lastRightB = b.otherEvent;
+
+			for (auto tB : intersections) {
+				if (std::isnan(tB)) {
+					continue;
+				}
+
+				auto pB = b.bezier.evaluate(tB);
+				auto tA = Hatch::intersect_ortho(a.bezier, pB[major], major);
+
+				applyIntersection(b.bezier, tB, pB, lastLeftB, lastRightB);
+				applyIntersection(a.bezier, tA, pB, lastLeftA, lastRightA);
+			}
+		};
+
+		BezierMartinez::SweepEvent* visualizedPoint = nullptr;
+
+		std::multiset<BezierMartinez::SweepEvent*, SegmentComp> sweepLine;
+		//std::multiset<BezierMartinez::SweepEvent*, BezierMartinez::CompareSegmentsLess> sweepLine;
+		std::vector<BezierMartinez::SweepEvent*> sortedEvents;
+
+		int stepCounter = 0;
+		while (!eventQueue.empty() /*&& stepCounter++ <= g_step*/) {
+			auto* pEvent = eventQueue.top();
+			eventQueue.pop();
+
+			sortedEvents.emplace_back(pEvent);
+
+			visualizedPoint = pEvent;
+
+			if (pEvent->left) {
+				auto next = sweepLine.insert(pEvent);
+				auto prev = next;
+				auto begin = sweepLine.begin();
+				bool hasPrev = prev != begin;
+
+				if (hasPrev) {
+					--prev;
+				}
+
+				++next;
+
+				auto* prevEvent = hasPrev ? *prev : nullptr;
+				BezierMartinez::compute_fields(*pEvent, prevEvent, BooleanOperation::INTERSECTION);
+
+				if (next != sweepLine.end()) {
+					checkIntersection(*pEvent, **next);
+				}
+
+				if (hasPrev) {
+					checkIntersection(*prevEvent, *pEvent);
+				}
+			}
+			else {
+				pEvent = pEvent->otherEvent;
+				auto curr = sweepLine.find(pEvent);
+				auto next = curr;
+				auto prev = curr;
+
+				if (next != sweepLine.end()) {
+					++next;
+
+					if (prev != sweepLine.begin() && next != sweepLine.end()) {
+						--prev;
+						checkIntersection(**prev, **next);
+					}
+
+					sweepLine.erase(curr);
+				}
+			}
+		}
 		
 		nvgBeginFrame(vg, g_width, g_height, 1.0);
+		
+		nvgBeginPath(vg);
+		nvgMoveTo(vg, 0.f, visualizedPoint->point.y);
+		nvgLineTo(vg, g_width, visualizedPoint->point.y);
+		nvgStrokeWidth(vg, 1.f);
+		nvgStrokeColor(vg, nvgRGBA(255, 255, 255, 255));
+		nvgStroke(vg);
+
+		/*for (auto& point : controlPoints) {
+			nvgBeginPath(vg);
+			nvgCircle(vg, point.x, point.y, 3);
+			nvgFillColor(vg, nvgRGBA(255, 0, 0, 255));
+			nvgFill(vg);
+		}*/
+
+		//for (auto* pEvent : sweepLine) {
+		for (auto* pEvent : sortedEvents) {
+			if (pEvent->left /*&& pEvent->resultTransition != Martinez::ResultTransition::NOT_IN_RESULT*/) {
+				//bool active = pEvent.get() == visualizedPoint || pEvent->otherEvent == visualizedPoint;
+				//bool compared = pEvent.get() == lastComparedA || pEvent.get() == lastComparedB;
+				bool active = pEvent == visualizedPoint || pEvent->otherEvent == visualizedPoint;
+				bool compared = pEvent == lastComparedA || pEvent == lastComparedB;
+				bool inResult = pEvent->resultTransition != Martinez::ResultTransition::NOT_IN_RESULT;
+
+				auto bez = pEvent->bezier.split_from_min_to_max(pEvent->t, pEvent->otherEvent->t);
+
+				nvgBeginPath(vg);
+				nvgMoveTo(vg, bez.P0.x, bez.P0.y);
+				nvgQuadTo(vg, bez.P1.x, bez.P1.y, bez.P2.x, bez.P2.y);
+				//nvgStrokeColor(vg, compared ? nvgRGBA(200, 200, 0, 64) : nvgRGBA(255, 255, 255, 64));
+				nvgStrokeColor(vg, inResult ? nvgRGBA(0, 255, 0, 64) : nvgRGBA(255, 0, 0, 64));
+				nvgStrokeWidth(vg, active ? 5 : 2);
+				nvgStroke(vg);
+
+				auto P0 = glm::vec2{bez.P0};
+				auto P1 = glm::vec2{bez.P1};
+				auto P2 = glm::vec2{bez.P2};
+				QuadraticBezier<float> bezier{P0, P1, P2};
+
+				auto a = P0 - glm::vec2(2.f, 2.f) * P1 + P2;
+				auto b = P1 - P0;
+				auto t = -b / a;
+
+				if (t.x >= 0.f && t.x <= 1.f) {
+					auto q = bezier.evaluate(t.x);
+					nvgBeginPath(vg);
+					nvgCircle(vg, q.x, q.y, 3);
+					nvgFillColor(vg, nvgRGBA(255, 255, 0, 255));
+					nvgFill(vg);
+				}
+
+				if (t.y >= 0.f && t.y <= 1.f) {
+					auto q = bezier.evaluate(t.y);
+					nvgBeginPath(vg);
+					nvgCircle(vg, q.x, q.y, 3);
+					nvgFillColor(vg, nvgRGBA(255, 0, 255, 255));
+					nvgFill(vg);
+				}
+			}
+		}
+
+		//draw_polygon(vg, polySubj, {}, nvgRGBA(0, 128, 0, 255));
+		//draw_polygon(vg, polyClip, {}, nvgRGBA(0, 128, 0, 255));
+		
+		for (auto* event : sortedPolyEvents) {
+			if (event->left) {
+				nvgBeginPath(vg);
+				nvgMoveTo(vg, event->point.x, event->point.y);
+				nvgLineTo(vg, event->otherEvent->point.x, event->otherEvent->point.y);
+				nvgStrokeWidth(vg, 2.f);
+				nvgStrokeColor(vg, event->is_in_result() ? nvgRGBA(0, 255, 0, 64) : nvgRGBA(255, 0, 0, 64));
+				//nvgStroke(vg);
+			}
+		}
+
+		nvgBeginPath(vg);
+		nvgCircle(vg, visualizedPoint->point.x, visualizedPoint->point.y, 4);
+		nvgFillColor(vg, visualizedPoint->left ? nvgRGBA(0, 0, 255, 255) : nvgRGBA(0, 255, 255, 255));
+		nvgFill(vg);
+
+		for (auto& sect : visualizedIntersections) {
+			nvgBeginPath(vg);
+			nvgCircle(vg, sect.x, sect.y, 2.5f);
+			nvgFillColor(vg, nvgRGBA(0, 255, 0, 255));
+			nvgFill(vg);
+		}
 
 		for (auto& box : hatchBoxes) {
+			hatchShader.bind();
+
+			float extents[] = {box.aabbMin.x, box.aabbMin.y, box.aabbMax.x - box.aabbMin.x,
+					box.aabbMax.y - box.aabbMin.y};
+			glUniform2fv(0, 1, invScreenSize);
+			glUniform4fv(1, 1, extents);
+			glUniform2fv(2, 3, reinterpret_cast<const float*>(&box.curveMin[0]));
+			glUniform2fv(5, 3, reinterpret_cast<const float*>(&box.curveMax[0]));
+			glDrawArrays(GL_TRIANGLES, 0, 6);
+
 			/*nvgBeginPath(vg);
 			nvgMoveTo(vg, box.aabbMin.x, box.aabbMin.y);
 			nvgLineTo(vg, box.aabbMax.x, box.aabbMin.y);
@@ -248,6 +602,54 @@ int main() {
 	glfwTerminate();
 }
 
+static void on_mouse_button_event(GLFWwindow* window, int button, int action, int mods) {
+	if (button == GLFW_MOUSE_BUTTON_1 && action == GLFW_PRESS) {
+		double mouseX, mouseY;
+		glfwGetCursorPos(window, &mouseX, &mouseY);
+
+		for (auto& controlPoint : controlPoints) {
+			if (glm::distance(controlPoint, glm::vec2{mouseX, mouseY}) < 3.f) {
+				selectedPoint = &controlPoint;
+				break;
+			}
+		}
+	}
+	else if (button == GLFW_MOUSE_BUTTON_1 && action == GLFW_RELEASE) {
+		selectedPoint = nullptr;
+	}
+}
+
+static void on_mouse_move_event(GLFWwindow* window, double xPos, double yPos) {
+	if (selectedPoint) {
+		*selectedPoint = glm::vec2{std::fminf(std::max(xPos, 0.0), g_width),
+				std::fminf(std::max(yPos, 0.0), g_height)};
+	}
+}
+
+static void on_key_event(GLFWwindow* window, int key, int scancode, int action, int mods) {
+	if (key == GLFW_KEY_LEFT && action == GLFW_PRESS) {
+		if (g_step > 0) {
+			--g_step;
+		}
+	}
+	else if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS) {
+		++g_step;
+	}
+
+	if (key == GLFW_KEY_S && action == GLFW_PRESS) {
+		if (auto* file = fopen("curves.bin", "wb")) {
+			fwrite(controlPoints, sizeof(controlPoints), 1, file);
+			fclose(file);
+		}
+	}
+	else if (key == GLFW_KEY_R && action == GLFW_PRESS) {
+		if (auto* file = fopen("curves.bin", "rb")) {
+			fread(controlPoints, sizeof(controlPoints), 1, file);
+			fclose(file);
+		}
+	}
+}
+
 static void draw_polygon(NVGcontext* vg, const Polygon& polygon, const glm::vec2& offset,
 		NVGcolor color) {
 	nvgBeginPath(vg);
@@ -261,6 +663,7 @@ static void draw_polygon(NVGcontext* vg, const Polygon& polygon, const glm::vec2
 	}
 
 	nvgStrokeColor(vg, color);
+	nvgStrokeWidth(vg, 1.f);
 	nvgStroke(vg);
 }
 

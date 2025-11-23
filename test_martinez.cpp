@@ -7,6 +7,8 @@
 #include <set>
 #include <cfloat>
 
+using namespace Martinez;
+
 struct Feature {
 	std::vector<Polygon> polygons;
 };

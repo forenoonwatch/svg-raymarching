@@ -6,6 +6,8 @@
 #include <memory>
 #include <queue>
 
+namespace Martinez {
+
 enum class EdgeType {
 	NORMAL,
 	NON_CONTRIBUTING,
@@ -98,3 +100,5 @@ size_t next_pos(size_t pos, const std::vector<SweepEvent*>& resultEvents, const 
 		size_t origPos);
 
 float signed_area(const glm::vec2& p0, const glm::vec2& p1, const glm::vec2& p2);
+
+}

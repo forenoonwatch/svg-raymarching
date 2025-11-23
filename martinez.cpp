@@ -10,6 +10,8 @@
 #include <glm/geometric.hpp>
 #include <glm/gtc/epsilon.hpp>
 
+using namespace Martinez;
+
 static constexpr const AABB AABB_INVALID = {FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
 
 static void process_polygon(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
@@ -94,7 +96,7 @@ void martinez_boolean(const Polygon& subject, const Polygon& clipping, Polygon& 
 	}
 }
 
-void fill_queue(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
+void Martinez::fill_queue(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
 		const Polygon& subject, const Polygon& clipping, AABB& sbbox, AABB& cbbox, BooleanOperation operation) {
 	uint32_t contourID = 0;
 
@@ -158,7 +160,7 @@ static void process_polygon(EventQueue& queue, std::vector<std::unique_ptr<Sweep
 	}
 }
 
-void subdivide_segments(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
+void Martinez::subdivide_segments(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
 		std::vector<SweepEvent*>& sortedEvents, const Polygon& subject, const Polygon& clipping,
 		const AABB& sbbox, const AABB& cbbox, BooleanOperation operation) {
 	using Node = std::multiset<SweepEvent*, CompareSegments>::iterator;
@@ -225,7 +227,7 @@ void subdivide_segments(EventQueue& queue, std::vector<std::unique_ptr<SweepEven
 			if (next != sweepLine.end()) {
 				++next;
 
-				if (prev != begin && next != sweepLine.end()) {
+				if (prev != sweepLine.begin() && next != sweepLine.end()) {
 					--prev;
 					possible_intersection(**prev, **next, queue, eventOwner);
 				}
@@ -485,7 +487,7 @@ static void divide_segment(EventQueue& queue, std::vector<std::unique_ptr<SweepE
 	eventOwner.emplace_back(std::move(r));
 }
 
-void connect_edges(std::vector<SweepEvent*>& sortedEvents, std::vector<Contour>& contours,
+void Martinez::connect_edges(std::vector<SweepEvent*>& sortedEvents, std::vector<Contour>& contours,
 		BooleanOperation operation) {
 	std::vector<SweepEvent*> resultEvents;
 	order_events(sortedEvents, resultEvents);
@@ -527,7 +529,8 @@ void connect_edges(std::vector<SweepEvent*>& sortedEvents, std::vector<Contour>&
 	}
 }
 
-void order_events(const std::vector<SweepEvent*>& sortedEvents, std::vector<SweepEvent*>& resultEvents) {
+void Martinez::order_events(const std::vector<SweepEvent*>& sortedEvents,
+		std::vector<SweepEvent*>& resultEvents) {
 	for (auto* event : sortedEvents) {
 		if ((event->left && event->is_in_result()) || (!event->left && event->otherEvent->is_in_result())) {
 			resultEvents.emplace_back(event);
@@ -614,8 +617,8 @@ static Contour& initialize_contour_from_context(std::vector<Contour>& contours, 
 	return contour;
 }
 
-size_t next_pos(size_t pos, const std::vector<SweepEvent*>& resultEvents, const std::vector<bool>& processed,
-		size_t origPos) {
+size_t Martinez::next_pos(size_t pos, const std::vector<SweepEvent*>& resultEvents,
+		const std::vector<bool>& processed, size_t origPos) {
 	auto newPos = pos + 1;
 	auto p = resultEvents[pos]->point;
 
@@ -657,7 +660,7 @@ static void deep_copy_shape(Polygon& dst, const Polygon& src) {
 	}
 }
 
-float signed_area(const glm::vec2& p0, const glm::vec2& p1, const glm::vec2& p2) {
+float Martinez::signed_area(const glm::vec2& p0, const glm::vec2& p1, const glm::vec2& p2) {
 	return (p0.x - p2.x) * (p1.y - p2.y) - (p1.x - p2.x) * (p0.y - p2.y);
 }
 
@@ -680,6 +683,7 @@ bool SweepEvent::is_above(const glm::vec2& p) const {
 }
 
 bool SweepEvent::is_vertical() const {
+	// NOTE: Candidate for epsilonEqual
 	return point.x == otherEvent->point.x;
 }
 

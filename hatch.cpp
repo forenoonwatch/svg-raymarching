@@ -1,6 +1,6 @@
 #include "hatch.hpp"
+#include "hatch_impl.hpp"
 
-#include "bezier.hpp"
 #include "pair.hpp"
 #include "svg.hpp"
 
@@ -8,53 +8,21 @@
 #include <cstring>
 
 #include <algorithm>
-#include <array>
 #include <limits>
 #include <queue>
 
 #include <glm/mat2x2.hpp>
 
-using real_t = double;
+using namespace Hatch;
 
-namespace {
-
-enum class MajorAxis : uint32_t {
-	MAJOR_X,
-	MAJOR_Y,
-};
-
-struct Segment {
-	const QuadraticBezier<real_t>* originalBezier{nullptr};
-	// because beziers are broken down, depending on the type this is tStart or tEnd
-	real_t tStart;
-	real_t tEnd;
-
-	std::array<real_t, 2> intersect(const Segment& other) const;
-	// Checks if it's a straight line e.g. if you're sweeping along the y axis then it's a line parallel to x
-	bool is_straight_line_constant_major() const;
-};
-
-}
-
-static constexpr const MajorAxis SELECTED_MAJOR_AXIS = MajorAxis::MAJOR_Y;
-static constexpr const MajorAxis SELECTED_MINOR_AXIS = MajorAxis::MAJOR_X;
-
-static constexpr real_t MINOR_POSITION_COMPARISON_THRESHOLD = real_t(1e-3);
-static constexpr real_t TANGENT_COMPARISON_THRESHOLD = real_t(1e-7);
-
-static bool split_into_major_monotonic_segments(const QuadraticBezier<real_t>& bezier,
-		std::array<QuadraticBezier<real_t>, 2>& result);
-static real_t intersect_ortho(const QuadraticBezier<real_t>& bezier, real_t lineConstant, int major);
 static Pair<glm::vec<2, real_t>, glm::vec<2, real_t>> calc_bezier_bounding_box_minor(
 		const QuadraticBezier<real_t>& bezier);
-
-static std::array<real_t, 4> bezier_bezier_intersections(const QuadraticBezier<real_t>& bezier,
-		const QuadraticBezier<real_t>& other);
 
 // Transforms curves into AABB UV space and turns them into quadratic coefficients
 static void transform_curves(const QuadraticBezier<real_t>& bezier, const glm::vec<2, real_t>& aabbMin,
 		const glm::vec<2, real_t>& aabbMax, glm::vec2* output);
 
+// FIXME: Does not properly detect (P0, P1, P1) segments
 static bool is_line_segment(const QuadraticBezier<real_t>& bezier);
 
 template <typename float_t>
@@ -88,6 +56,8 @@ void generate_hatch_boxes(const CPUQuadraticShape& shape, std::vector<CurveHatch
 	for (auto& path : shape.paths) {
 		for (size_t ip = 0; ip < path.points.size() - 1; ip += 2) {
 			QuadraticBezier<real_t> unsplitBezier{path.points[ip], path.points[ip + 1], path.points[ip + 2]};
+
+			// FIXME: Better detect that a line segment is unsplit
 
 			std::array<QuadraticBezier<real_t>, 2> monotonicSegments;
 			bool alreadyMonotonic = split_into_major_monotonic_segments(unsplitBezier, monotonicSegments);
@@ -139,68 +109,7 @@ void generate_hatch_boxes(const CPUQuadraticShape& shape, std::vector<CurveHatch
 	std::priority_queue<real_t, std::vector<real_t>, std::greater<real_t>> intersections;
 	std::vector<Segment> activeCandidates; // Set of active candidates for neighbor search in sweep line
 	
-	auto candidateComparator = [minor, major](const Segment& a, const Segment& b) {
-		auto lhs = a.originalBezier->evaluate(a.tStart)[minor];
-		auto rhs = b.originalBezier->evaluate(b.tStart)[minor];
-
-		auto lenLhs = glm::distance(a.originalBezier->P0, a.originalBezier->P2);
-		auto lenRhs = glm::distance(b.originalBezier->P0, b.originalBezier->P2);
-		auto minLen = std::fminf(lenLhs, lenRhs);
-
-		// Threshold here for intersection points, where the minor values for the curves are very close but
-		// could be smaller, causing the curves to be in the wrong order
-		if (std::abs(lhs - rhs) < MINOR_POSITION_COMPARISON_THRESHOLD * minLen) {
-			// This is how you want to order the derivatives dmin/dmaj=-IMF dmin/dmaj = 0 dmin/dmaj = INF
-			// also leverage the guarantee that `dmaj>=0` to get numerically stable compare
-			auto lhsQuadratic = QuadraticCurve<real_t>::from_bezier(a.originalBezier->P0, a.originalBezier->P1,
-					a.originalBezier->P2);
-			auto rhsQuadratic = QuadraticCurve<real_t>::from_bezier(b.originalBezier->P0, b.originalBezier->P1,
-					b.originalBezier->P2);
-
-			auto lTan = a.originalBezier->derivative(a.tStart);
-			auto rTan = b.originalBezier->derivative(b.tStart);
-
-			lhs = lTan[minor] * rTan[major];
-			rhs = rTan[minor] * lTan[major];
-
-			// Negative values mess with the comparison operator when using multiplication. They should be
-			// positive because of major monotonicity
-			assert(lTan[major] >= real_t(0.0));
-			assert(rTan[major] >= real_t(0.0));
-
-			if (std::abs(lhs - rhs) < TANGENT_COMPARISON_THRESHOLD) {
-				auto lAcc = real_t(2.0) * lhsQuadratic.A;
-				auto rAcc = real_t(2.0) * rhsQuadratic.A;
-
-				// In this branch, lhs == rhs == 0 (tangents are both 0)
-				if (std::abs(lhs - real_t(0.0)) < TANGENT_COMPARISON_THRESHOLD) {
-					bool lTanSign = lTan[minor] >= real_t(0.0);
-					bool rTanSign = rTan[minor] >= real_t(0.0);
-
-					// CASE A: If the signs of the horizontal tangents differ, we know the negative one belongs
-					// to the left curve
-					if (lTanSign != rTanSign) {
-						return rTanSign;
-					}
-
-					// CASE B: Otherwise, in this case the tangents are both on the same side, so only the
-					// magnitude/abs of the d2Major/dMinor2 is important
-					lhs = -std::abs(lAcc[minor] * lTan[major] - lAcc[major] * lTan[minor])
-							* std::pow(rTan[minor], real_t(3.0));
-					rhs = -std::abs(rAcc[minor] * rTan[major] - rAcc[major] * rTan[minor])
-							* std::pow(lTan[minor], real_t(3.0));
-				}
-				else {
-					lhs = (lAcc[minor] * lTan[major] - lAcc[major] * lTan[minor])
-							* std::pow(rTan[major], real_t(3.0));
-					rhs = (rAcc[minor] * rTan[major] - rAcc[major] * rTan[minor])
-							* std::pow(lTan[major], real_t(3.0));
-				}
-			}
-		}
-
-		return lhs < rhs;
-	};
+	SegmentLess candidateComparator{major, minor};
 
 	auto addToCandidateSet = [&](const Segment& entry) {
 		if (entry.is_straight_line_constant_major()) {
@@ -349,7 +258,7 @@ void generate_hatch_boxes(const CPUQuadraticShape& shape, std::vector<CurveHatch
 	}
 }
 
-static bool split_into_major_monotonic_segments(const QuadraticBezier<real_t>& bezier,
+bool Hatch::split_into_major_monotonic_segments(const QuadraticBezier<real_t>& bezier,
 		std::array<QuadraticBezier<real_t>, 2>& result) {
 	// Getting derivatives for the quadratic bezier
 	auto quadratic = QuadraticCurve<real_t>::from_bezier(bezier.P0, bezier.P1, bezier.P2);
@@ -369,7 +278,7 @@ static bool split_into_major_monotonic_segments(const QuadraticBezier<real_t>& b
 	return false;
 }
 
-static real_t intersect_ortho(const QuadraticBezier<real_t>& bezier, real_t lineConstant, int component) {
+real_t Hatch::intersect_ortho(const QuadraticBezier<real_t>& bezier, real_t lineConstant, int component) {
 	// https://pomax.github.io/bezierinfo/#intersections
 	real_t points[] = {bezier.P0[component], bezier.P1[component], bezier.P2[component]};
 
@@ -423,7 +332,7 @@ static Pair<glm::vec<2, real_t>, glm::vec<2, real_t>> calc_bezier_bounding_box_m
 	return {bMin, bMax};
 }
 
-static std::array<real_t, 4> bezier_bezier_intersections(const QuadraticBezier<real_t>& lhs,
+std::array<real_t, 4> Hatch::bezier_bezier_intersections(const QuadraticBezier<real_t>& lhs,
 		const QuadraticBezier<real_t>& rhs) {
 	static constexpr real_t QUARTIC_THRESHOLD = real_t(1e-10);
 
@@ -604,4 +513,67 @@ bool Segment::is_straight_line_constant_major() const {
 
 	//assert(p0 <= p1 && p1 <= p2); (PRECISION ISSUES ARISE ONCE MORE)
 	return std::abs(p1 - p0) <= std::exp2(-24.0) && std::abs(p2 - p0) <= std::exp(-24.0f);
+}
+
+bool SegmentLess::operator()(const Segment& a, const Segment& b) const {
+	auto lhs = a.originalBezier->evaluate(a.tStart)[minor];
+	auto rhs = b.originalBezier->evaluate(b.tStart)[minor];
+
+	auto lenLhs = glm::distance(a.originalBezier->P0, a.originalBezier->P2);
+	auto lenRhs = glm::distance(b.originalBezier->P0, b.originalBezier->P2);
+	auto minLen = std::fminf(lenLhs, lenRhs);
+
+	// Threshold here for intersection points, where the minor values for the curves are very close but
+	// could be smaller, causing the curves to be in the wrong order
+	if (std::abs(lhs - rhs) < MINOR_POSITION_COMPARISON_THRESHOLD * minLen) {
+		// This is how you want to order the derivatives dmin/dmaj=-IMF dmin/dmaj = 0 dmin/dmaj = INF
+		// also leverage the guarantee that `dmaj>=0` to get numerically stable compare
+		auto lhsQuadratic = QuadraticCurve<real_t>::from_bezier(a.originalBezier->P0, a.originalBezier->P1,
+				a.originalBezier->P2);
+		auto rhsQuadratic = QuadraticCurve<real_t>::from_bezier(b.originalBezier->P0, b.originalBezier->P1,
+				b.originalBezier->P2);
+
+		auto lTan = a.originalBezier->derivative(a.tStart);
+		auto rTan = b.originalBezier->derivative(b.tStart);
+
+		lhs = lTan[minor] * rTan[major];
+		rhs = rTan[minor] * lTan[major];
+
+		// Negative values mess with the comparison operator when using multiplication. They should be
+		// positive because of major monotonicity
+		assert(lTan[major] >= real_t(0.0));
+		assert(rTan[major] >= real_t(0.0));
+
+		if (std::abs(lhs - rhs) < TANGENT_COMPARISON_THRESHOLD) {
+			auto lAcc = real_t(2.0) * lhsQuadratic.A;
+			auto rAcc = real_t(2.0) * rhsQuadratic.A;
+
+			// In this branch, lhs == rhs == 0 (tangents are both 0)
+			if (std::abs(lhs - real_t(0.0)) < TANGENT_COMPARISON_THRESHOLD) {
+				bool lTanSign = lTan[minor] >= real_t(0.0);
+				bool rTanSign = rTan[minor] >= real_t(0.0);
+
+				// CASE A: If the signs of the horizontal tangents differ, we know the negative one belongs
+				// to the left curve
+				if (lTanSign != rTanSign) {
+					return rTanSign;
+				}
+
+				// CASE B: Otherwise, in this case the tangents are both on the same side, so only the
+				// magnitude/abs of the d2Major/dMinor2 is important
+				lhs = -std::abs(lAcc[minor] * lTan[major] - lAcc[major] * lTan[minor])
+						* std::pow(rTan[minor], real_t(3.0));
+				rhs = -std::abs(rAcc[minor] * rTan[major] - rAcc[major] * rTan[minor])
+						* std::pow(lTan[minor], real_t(3.0));
+			}
+			else {
+				lhs = (lAcc[minor] * lTan[major] - lAcc[major] * lTan[minor])
+						* std::pow(rTan[major], real_t(3.0));
+				rhs = (rAcc[minor] * rTan[major] - rAcc[major] * rTan[minor])
+						* std::pow(lTan[major], real_t(3.0));
+			}
+		}
+	}
+
+	return lhs < rhs;
 }
