@@ -99,8 +99,8 @@ static void add_polygon_svg(std::vector<CPUQuadraticShape>& svgShapes, const Pol
 		path.points.emplace_back(subshape.points[0] + polygonOffset);
 
 		for (size_t i = 1; i < subshape.points.size(); ++i) {
-			//path.points.emplace_back((subshape.points[i - 1] + subshape.points[i]) * 0.5f + polygonOffset);
-			path.points.emplace_back(subshape.points[i] + polygonOffset);
+			path.points.emplace_back((subshape.points[i - 1] + subshape.points[i]) * 0.5f + polygonOffset);
+			//path.points.emplace_back(subshape.points[i] + polygonOffset);
 			path.points.emplace_back(subshape.points[i] + polygonOffset);
 		}
 	}
@@ -225,13 +225,13 @@ int main() {
 	};
 
 	Polygon result{};
-	martinez_boolean(subject, clipping, result, BooleanOperation::DIFFERENCE);
+	martinez_boolean(subject, clipping, result, BooleanOperation::XOR);
 
 	glm::vec2 polygonOffset{200, 300};
 
 	//add_polygon_svg(svgShapes, subject, 0xFF008000u, polygonOffset);
-	add_polygon_svg(svgShapes, clipping, 0xFF008000u, polygonOffset);
-	//add_polygon_svg(svgShapes, result, 0xFF0000FFu, polygonOffset);
+	//add_polygon_svg(svgShapes, clipping, 0xFF008000u, polygonOffset);
+	add_polygon_svg(svgShapes, result, 0xFF0000FFu, polygonOffset);
 	
 	CPUQuadraticShape subj{
 		.paths = {
@@ -253,15 +253,23 @@ int main() {
 		},
 	};
 
+	Polygon isolated{
+		.subShapes = {
+			//{.points = {{18.5f, 89.5f}, {90, -141.5f}, {178.5f, -181.5f}, {184, 79.5f}, {18.5f, 89.5f}}},
+			{.points = { {90, -141.5f}, {178.5f, -181.5f}, {184, -141.5f}, {90, -141.5f}, }},
+			//{.points = {{112.5f, -108.5f}, {72, 57.5f}, {162, 59.5f}, {158, -132}, {112.5f, -108.5f}}},
+		}
+	};
+
 	CPUQuadraticShape resShape;
 	martinez_boolean_bezier(subj, clip, resShape, BooleanOperation::DIFFERENCE);
 
 	std::vector<CurveHatchBox> hatchBoxes;
 
-	generate_hatch_boxes(resShape, hatchBoxes);
+	//generate_hatch_boxes(resShape, hatchBoxes);
 
 	for (auto& shape : svgShapes) {
-		//generate_hatch_boxes(shape, hatchBoxes);
+		generate_hatch_boxes(shape, hatchBoxes);
 	}
 
 	printf("Generated %llu hatch boxes\n", hatchBoxes.size());
@@ -302,65 +310,10 @@ int main() {
 		Polygon polySubj = quad_shape_to_polygon(subj);
 		Polygon polyClip = quad_shape_to_polygon(clip);
 
-		std::vector<std::unique_ptr<Martinez::SweepEvent>> polyEvents;
-		std::vector<Martinez::SweepEvent*> sortedPolyEvents;
-
 		Polygon polyRes;
 		martinez_boolean(polySubj, polyClip, polyRes, BooleanOperation::UNION);
 
-		std::vector<std::unique_ptr<BezierMartinez::SweepEvent>> ownedEvents;
-		BezierMartinez::EventQueue eventQueue;
-
-		BezierMartinez::fill_queue(eventQueue, ownedEvents, subj, clip, BooleanOperation::DIFFERENCE);
-
-		std::vector<BezierMartinez::SweepEvent*> sortedEvents;
-		BezierMartinez::subdivide_segments(eventQueue, ownedEvents, sortedEvents, subj, clip,
-				BooleanOperation::UNION);
-
-		std::vector<BezierMartinez::Contour> contours;
-		BezierMartinez::connect_edges(sortedEvents, contours, BooleanOperation::XOR);
-
 		nvgBeginFrame(vg, g_width, g_height, 1.0);
-
-		for (auto* pEvent : sortedEvents) {
-			if (pEvent->left) {
-				bool inResult = pEvent->resultTransition != Martinez::ResultTransition::NOT_IN_RESULT;
-
-				auto bez = pEvent->bezier.split_from_min_to_max(pEvent->t, pEvent->otherEvent->t);
-
-				nvgBeginPath(vg);
-				nvgMoveTo(vg, bez.P0.x, bez.P0.y);
-				nvgQuadTo(vg, bez.P1.x, bez.P1.y, bez.P2.x, bez.P2.y);
-				nvgStrokeColor(vg, inResult ? nvgRGBA(0, 255, 0, 64) : nvgRGBA(255, 0, 0, 64));
-				nvgStrokeWidth(vg, 2);
-				nvgStroke(vg);
-
-				auto P0 = glm::vec2{bez.P0};
-				auto P1 = glm::vec2{bez.P1};
-				auto P2 = glm::vec2{bez.P2};
-				QuadraticBezier<float> bezier{P0, P1, P2};
-
-				auto a = P0 - glm::vec2(2.f, 2.f) * P1 + P2;
-				auto b = P1 - P0;
-				auto t = -b / a;
-
-				if (t.x >= 0.f && t.x <= 1.f) {
-					auto q = bezier.evaluate(t.x);
-					nvgBeginPath(vg);
-					nvgCircle(vg, q.x, q.y, 3);
-					nvgFillColor(vg, nvgRGBA(255, 255, 0, 255));
-					nvgFill(vg);
-				}
-
-				if (t.y >= 0.f && t.y <= 1.f) {
-					auto q = bezier.evaluate(t.y);
-					nvgBeginPath(vg);
-					nvgCircle(vg, q.x, q.y, 3);
-					nvgFillColor(vg, nvgRGBA(255, 0, 255, 255));
-					nvgFill(vg);
-				}
-			}
-		}
 
 		for (auto& path : resShape.paths) {
 			nvgBeginPath(vg);
@@ -392,17 +345,6 @@ int main() {
 
 		//draw_polygon(vg, polySubj, {}, nvgRGBA(0, 128, 0, 255));
 		//draw_polygon(vg, polyClip, {}, nvgRGBA(0, 128, 0, 255));
-		
-		for (auto* event : sortedPolyEvents) {
-			if (event->left) {
-				nvgBeginPath(vg);
-				nvgMoveTo(vg, event->point.x, event->point.y);
-				nvgLineTo(vg, event->otherEvent->point.x, event->otherEvent->point.y);
-				nvgStrokeWidth(vg, 2.f);
-				nvgStrokeColor(vg, event->is_in_result() ? nvgRGBA(0, 255, 0, 64) : nvgRGBA(255, 0, 0, 64));
-				//nvgStroke(vg);
-			}
-		}
 
 		for (auto& box : hatchBoxes) {
 			hatchShader.bind();
@@ -429,10 +371,16 @@ int main() {
 			auto p1 = box.curveMin[1] * (box.aabbMax - box.aabbMin) + box.aabbMin;
 			auto p2 = box.curveMin[2] * (box.aabbMax - box.aabbMin) + box.aabbMin;
 
+			auto cross = [](const auto& a, const auto& b) {
+				return a.x * b.y - a.y * b.x;
+			};
+
+			bool linear = std::abs(cross(p1 - p0, p2 - p0)) < 1e-2;
+
 			nvgBeginPath(vg);
 			nvgMoveTo(vg, p0.x, p0.y);
 			nvgQuadTo(vg, p1.x, p1.y, p2.x, p2.y);
-			nvgStrokeColor(vg, nvgRGBA(0, 0, 255, 255));
+			nvgStrokeColor(vg, linear ? nvgRGBA(255, 255, 0, 255) : nvgRGBA(0, 0, 255, 255));
 			nvgStrokeWidth(vg, 2.f);
 			nvgStroke(vg);
 
@@ -440,10 +388,12 @@ int main() {
 			p1 = box.curveMax[1] * (box.aabbMax - box.aabbMin) + box.aabbMin;
 			p2 = box.curveMax[2] * (box.aabbMax - box.aabbMin) + box.aabbMin;
 
+			linear = std::abs(cross(p1 - p0, p2 - p0)) < 1e-2;
+
 			nvgBeginPath(vg);
 			nvgMoveTo(vg, p0.x, p0.y);
 			nvgQuadTo(vg, p1.x, p1.y, p2.x, p2.y);
-			nvgStrokeColor(vg, nvgRGBA(0, 0, 255, 255));
+			nvgStrokeColor(vg, linear ? nvgRGBA(255, 255, 0, 255) : nvgRGBA(0, 0, 255, 255));
 			nvgStrokeWidth(vg, 2.f);
 			nvgStroke(vg);
 		}

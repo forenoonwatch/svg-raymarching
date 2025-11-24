@@ -226,7 +226,9 @@ static void possible_intersection(SweepEvent& a, SweepEvent& b, EventQueue& queu
 		}
 
 		auto pB = b.bezier.evaluate(tB);
+		// Due to precision, if the curve is right at the end, intersect_ortho may return nan
 		auto tA = Hatch::intersect_ortho(a.bezier, pB[major], major);
+		tA = std::isnan(tA) ? b.otherEvent->t : tA;
 
 		divide_segment(queue, eventOwner, b.bezier, tB, pB, lastLeftB, lastRightB);
 		divide_segment(queue, eventOwner, a.bezier, tA, pB, lastLeftA, lastRightA);

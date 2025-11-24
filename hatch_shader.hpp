@@ -252,5 +252,6 @@ void main() {
 	//o_color = vec4(v_texCoord, 0, 1);
 	o_color = v_texCoord.x >= qMin.x && v_texCoord.x <= qMax.x
 		? (swapped ? vec4(1, 0, 0, 1) : vec4(0, 1, 0, 1)) : vec4(0, 0, 0, 0);
+	//o_color = swapped ? vec4(1, 0, 0, 1) : vec4(0, 1, 0, 1);
 }
 )";
