@@ -30,7 +30,7 @@ static Contour& initialize_contour_from_context(std::vector<Contour>& contours, 
 static float cross(const glm::vec2& a, const glm::vec2& b);
 
 static bool point_equals(const glm::vec2& a, const glm::vec2& b) {
-	return glm::any(glm::epsilonEqual(a, b, 1e-4f));
+	return glm::all(glm::epsilonEqual(a, b, 1e-4f));
 }
 
 static void deep_copy_shape(Polygon& dst, const Polygon& src);

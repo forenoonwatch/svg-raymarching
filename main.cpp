@@ -29,6 +29,7 @@
 #include <memory>
 #include <queue>
 #include <set>
+#include <unordered_map>
 #include <glm/geometric.hpp>
 #include "hatch_impl.hpp"
 #include "martinez_impl.hpp"
@@ -253,6 +254,11 @@ int main() {
 		},
 	};
 
+	auto polySubj = quad_shape_to_polygon(subj);
+	auto polyClip = quad_shape_to_polygon(clip);
+	Polygon polyRes;
+	martinez_boolean(polySubj, polyClip, polyRes, BooleanOperation::XOR);
+
 	Polygon isolated{
 		.subShapes = {
 			//{.points = {{18.5f, 89.5f}, {90, -141.5f}, {178.5f, -181.5f}, {184, 79.5f}, {18.5f, 89.5f}}},
@@ -262,14 +268,14 @@ int main() {
 	};
 
 	CPUQuadraticShape resShape;
-	martinez_boolean_bezier(subj, clip, resShape, BooleanOperation::DIFFERENCE);
+	martinez_boolean_bezier(subj, clip, resShape, BooleanOperation::XOR);
 
 	std::vector<CurveHatchBox> hatchBoxes;
 
 	//generate_hatch_boxes(resShape, hatchBoxes);
 
 	for (auto& shape : svgShapes) {
-		generate_hatch_boxes(shape, hatchBoxes);
+		//generate_hatch_boxes(shape, hatchBoxes);
 	}
 
 	printf("Generated %llu hatch boxes\n", hatchBoxes.size());
@@ -278,6 +284,7 @@ int main() {
 	glNamedBufferStorage(curveBuffer, sizeof(shaderPathData), &shaderPathData, GL_DYNAMIC_STORAGE_BIT);
 
 	auto lastTime = glfwGetTime();
+	int step = 0;
 
 	while (!glfwWindowShouldClose(window)) {
 		auto currTime = glfwGetTime();
@@ -307,35 +314,202 @@ int main() {
 		int major = static_cast<int>(Hatch::SELECTED_MAJOR_AXIS);
 		int minor = 1 - major;
 
-		Polygon polySubj = quad_shape_to_polygon(subj);
-		Polygon polyClip = quad_shape_to_polygon(clip);
+		std::vector<std::unique_ptr<BezierMartinez::SweepEvent>> ownedEvents;
+		std::vector<BezierMartinez::SweepEvent*> sortedEvents;
+		std::vector<BezierMartinez::Contour> contours;
+		std::vector<std::unique_ptr<Martinez::SweepEvent>> ownedPolyEvents;
+		std::vector<Martinez::SweepEvent*> sortedPolyEvents;
+		std::vector<Martinez::SweepEvent*> resultPolyEvents;
+		std::vector<Martinez::Contour> polyContours;
+		{
+			using namespace BezierMartinez;
 
-		Polygon polyRes;
-		martinez_boolean(polySubj, polyClip, polyRes, BooleanOperation::UNION);
+			EventQueue queue;
+			fill_queue(queue, ownedEvents, subj, clip, BooleanOperation::XOR);
+
+			subdivide_segments(queue, ownedEvents, sortedEvents, subj, clip, BooleanOperation::XOR);
+
+			connect_edges(sortedEvents, contours, BooleanOperation::XOR);
+
+			/*std::unordered_map<BezierMartinez::SweepEvent*, Martinez::SweepEvent*> bezToPoly;
+
+			for (size_t i = 0; i < sortedEvents.size(); ++i) {
+				auto* event = sortedEvents[i];
+
+				auto e = std::make_unique<Martinez::SweepEvent>(event->point, nullptr, event->contourID,
+						event->edgeType, event->left, event->isSubject, false, event->inOut, event->otherInOut,
+						nullptr, event->resultTransition);
+
+				bezToPoly.emplace(std::make_pair(event, e.get()));
+
+				sortedPolyEvents.emplace_back(e.get());
+				ownedPolyEvents.emplace_back(std::move(e));
+			}
+
+			for (size_t i = 0; i < sortedEvents.size(); ++i) {
+				auto* polyEvent = sortedPolyEvents[i];
+				polyEvent->otherEvent = bezToPoly[sortedEvents[i]->otherEvent];
+				polyEvent->prevInResult = bezToPoly[sortedEvents[i]->prevInResult];
+			}*/
+
+			Martinez::AABB sbbox{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+			Martinez::AABB cbbox{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+			Martinez::EventQueue polyQueue;
+			Martinez::fill_queue(polyQueue, ownedPolyEvents, polySubj, polyClip,
+					sbbox, cbbox, BooleanOperation::XOR);
+
+			Martinez::subdivide_segments(polyQueue, ownedPolyEvents, sortedPolyEvents, polySubj, polyClip,
+					sbbox, cbbox, BooleanOperation::XOR);
+
+			Martinez::order_events(sortedPolyEvents, resultPolyEvents);
+
+			//Martinez::connect_edges(sortedPolyEvents, polyContours, BooleanOperation::XOR);
+		}
 
 		nvgBeginFrame(vg, g_width, g_height, 1.0);
 
-		for (auto& path : resShape.paths) {
-			nvgBeginPath(vg);
-			nvgMoveTo(vg, path.points[0].x, path.points[0].y);
-
-			for (size_t i = 0; i < path.points.size() - 1; i += 2) {
-				nvgQuadTo(vg, path.points[i + 1].x, path.points[i + 1].y,
-						path.points[i + 2].x, path.points[i + 2].y);
+		/*for (auto* event : sortedEvents) {
+			if (!event->left) {
+				continue;
 			}
 
-			nvgStrokeWidth(vg, 2.f);
-			nvgStrokeColor(vg, nvgRGBA(0, 0, 255, 128));
-			nvgStroke(vg);
-		}
+			nvgBeginPath(vg);
 
-		/*for (auto& contour : contours) {
+			auto bez = event->bezier.split_from_min_to_max(event->t, event->otherEvent->t);
+
+			nvgMoveTo(vg, bez.P0.x, bez.P0.y);
+			nvgQuadTo(vg, bez.P1.x, bez.P1.y, bez.P2.x, bez.P2.y);
+
+			nvgStrokeWidth(vg, 2.f);
+			nvgStrokeColor(vg, event->is_in_result() ? nvgRGBA(0, 255, 0, 64) : nvgRGBA(255, 0, 0, 64));
+			nvgStroke(vg);
+
+			nvgBeginPath(vg);
+			nvgCircle(vg, bez.P0.x, bez.P0.y, 4);
+			nvgCircle(vg, bez.P2.x, bez.P2.y, 4);
+			nvgFillColor(vg, nvgRGBA(255, 0, 0, 255));
+			nvgFill(vg);
+		}*/
+
+		//for (auto& contour : contours) {
+		/*{ auto& contour = contours[0];
 			nvgBeginPath(vg);
 			nvgMoveTo(vg, contour.points[0].x, contour.points[0].y);
 
 			for (size_t i = 0; i < contour.points.size() - 1; i += 2) {
 				nvgQuadTo(vg, contour.points[i + 1].x, contour.points[i + 1].y,
 						contour.points[i + 2].x, contour.points[i + 2].y);
+			}
+
+			nvgStrokeWidth(vg, 2.f);
+			nvgStrokeColor(vg, nvgRGBA(0, 0, 255, 255));
+			nvgStroke(vg);
+
+			nvgBeginPath(vg);
+			nvgCircle(vg, contour.points[0].x, contour.points[0].y, 3.f);
+			nvgFillColor(vg, nvgRGBA(255, 0, 0, 255));
+			nvgFill(vg);
+		}*/
+
+		for (auto& contour : polyRes.subShapes) {
+			nvgBeginPath(vg);
+			nvgMoveTo(vg, contour.points[0].x, contour.points[0].y);
+
+			for (size_t i = 1; i < contour.points.size(); ++i) {
+				nvgLineTo(vg, contour.points[i].x, contour.points[i].y);
+			}
+
+			nvgStrokeWidth(vg, 2.f);
+			nvgStrokeColor(vg, nvgRGBA(0, 0, 255, 255));
+			nvgStroke(vg);
+
+			nvgBeginPath(vg);
+			nvgCircle(vg, contour.points[0].x, contour.points[0].y, 3.f);
+			nvgFillColor(vg, nvgRGBA(255, 0, 0, 255));
+			nvgFill(vg);
+		}
+
+		for (auto* event : sortedPolyEvents) {
+			if (!event->left || !event->is_in_result()) {
+				continue;
+			}
+
+			nvgBeginPath(vg);
+			nvgMoveTo(vg, event->point.x, event->point.y);
+			nvgLineTo(vg, event->otherEvent->point.x, event->otherEvent->point.y);
+
+			nvgStrokeWidth(vg, 2.f);
+			nvgStrokeColor(vg, nvgRGBA(0, 255, 0, 128));
+			nvgStroke(vg);
+		}
+
+		counter += deltaTime;
+
+		while (counter >= 1) {
+			counter -= 1;
+			step = (step + 1) % resultPolyEvents.size();
+		}
+
+		std::vector<bool> processed;
+		processed.resize(resultPolyEvents.size());
+
+		for (size_t i = 0, stepCounter = 0; i < resultPolyEvents.size(); ++i) {
+			if (processed[i]) {
+				continue;
+			}
+
+			auto pos = i;
+			auto origPos = i;
+			auto initial = resultPolyEvents[i]->point;
+
+			if (stepCounter++ == step) {
+				nvgBeginPath(vg);
+				nvgCircle(vg, initial.x, initial.y, 4);
+				nvgFillColor(vg, nvgRGBA(0, 255, 0, 255));
+				nvgFill(vg);
+				break;
+			}
+
+			for (;;) {
+				processed[pos] = true;
+
+				pos = resultPolyEvents[pos]->otherPos;
+				processed[pos] = true;
+
+				//contour.points.emplace_back(resultEvents[pos]->point);
+				if (stepCounter++ == step) {
+					nvgBeginPath(vg);
+					nvgCircle(vg, resultPolyEvents[pos]->point.x, resultPolyEvents[pos]->point.y, 4);
+					nvgFillColor(vg, resultPolyEvents[pos]->left ? nvgRGBA(255, 0, 255, 255) :
+							nvgRGBA(255, 255, 0, 255));
+					nvgFill(vg);
+
+					nvgBeginPath(vg);
+					nvgMoveTo(vg, resultPolyEvents[pos]->point.x, resultPolyEvents[pos]->point.y);
+					nvgLineTo(vg, resultPolyEvents[pos]->otherEvent->point.x,
+							resultPolyEvents[pos]->otherEvent->point.y);
+					nvgStrokeWidth(vg, 2.f);
+					nvgStrokeColor(vg, nvgRGBA(0, 255, 255, 255));
+					nvgStroke(vg);
+
+					break;
+				}
+
+				pos = Martinez::next_pos(pos, resultPolyEvents, processed, origPos);
+
+				if (pos == origPos || pos >= resultPolyEvents.size()) {
+					break;
+				}
+			}
+		}
+
+		/*for (auto& path : resShape.paths) {
+			nvgBeginPath(vg);
+			nvgMoveTo(vg, path.points[0].x, path.points[0].y);
+
+			for (size_t i = 0; i < path.points.size() - 1; i += 2) {
+				nvgQuadTo(vg, path.points[i + 1].x, path.points[i + 1].y,
+						path.points[i + 2].x, path.points[i + 2].y);
 			}
 
 			nvgStrokeWidth(vg, 2.f);

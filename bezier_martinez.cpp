@@ -12,7 +12,7 @@
 using namespace BezierMartinez;
 
 static bool point_equals(const glm::vec<2, real_t>& a, const glm::vec<2, real_t>& b) {
-	return glm::any(glm::epsilonEqual(a, b, real_t(1e-4)));
+	return glm::all(glm::epsilonEqual(a, b, real_t(1e-4)));
 }
 
 static void process_path(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,

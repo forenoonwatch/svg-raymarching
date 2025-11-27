@@ -395,6 +395,7 @@ static void transform_curves(const QuadraticBezier<real_t>& bezier, const glm::v
 }
 
 static bool is_line_segment(const QuadraticBezier<real_t>& bezier) {
+	static constexpr const real_t EPSILON = 1e-4;
 	//auto quadratic = QuadraticCurve<real_t>::from_bezier(bezier.P0, bezier.P1, bezier.P2);
 	//auto lenSqA = glm::dot(quadratic.A, quadratic.A);
 	//return lenSqA < std::exp(-23.f) * glm::dot(quadratic.B, quadratic.B);
@@ -402,7 +403,8 @@ static bool is_line_segment(const QuadraticBezier<real_t>& bezier) {
 	auto p10 = bezier.P1 - bezier.P0;
 	auto p20 = bezier.P2 - bezier.P0;
 	auto cr = cross(bezier.P1 - bezier.P0, bezier.P2 - bezier.P0);
-	return (cr * cr) / (glm::dot(p10, p10) + glm::dot(p20, p20)) < 1e-4;
+	auto sqLen = glm::dot(p10, p10) + glm::dot(p20, p20);
+	return (cr * cr) < EPSILON * sqLen;
 }
 
 std::array<real_t, 2> Segment::intersect(const Segment& other) const {
