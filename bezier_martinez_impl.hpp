@@ -15,6 +15,8 @@ using real_t = double;
 using Martinez::ResultTransition;
 using Martinez::EdgeType;
 
+using Martinez::AABB;
+
 struct SweepEvent {
 	glm::vec<2, real_t> point;
 	real_t t;
@@ -71,10 +73,11 @@ struct Contour {
 };
 
 void fill_queue(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
-		const CPUQuadraticShape& subject, const CPUQuadraticShape& clipping, BooleanOperation operation);
+		const CPUQuadraticShape& subject, const CPUQuadraticShape& clipping, AABB& sbbox, AABB& cbbox,
+		BooleanOperation operation);
 void subdivide_segments(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
 		std::vector<SweepEvent*>& sortedEvents, const CPUQuadraticShape& subject,
-		const CPUQuadraticShape& clipping, BooleanOperation operation);
+		const CPUQuadraticShape& clipping, const AABB& sbbox, const AABB& cbbox, BooleanOperation operation);
 void connect_edges(std::vector<SweepEvent*>& sortedEvents, std::vector<Contour>& contours,
 		BooleanOperation operation);
 void order_events(const std::vector<SweepEvent*>& sortedEvents, std::vector<SweepEvent*>& resultEvents);

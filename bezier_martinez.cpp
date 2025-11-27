@@ -4,6 +4,7 @@
 #include "hatch_impl.hpp"
 #include "martinez_impl.hpp"
 
+#include <cfloat>
 #include <set>
 #include <utility>
 
@@ -11,12 +12,14 @@
 
 using namespace BezierMartinez;
 
+static constexpr const AABB AABB_INVALID = {FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+
 static bool point_equals(const glm::vec<2, real_t>& a, const glm::vec<2, real_t>& b) {
 	return glm::all(glm::epsilonEqual(a, b, real_t(1e-4)));
 }
 
 static void process_path(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
-		const CPUQuadraticPath& contourOrHole, bool isSubject, uint32_t contourID);
+		const CPUQuadraticPath& contourOrHole, AABB& bbox, bool isSubject, uint32_t contourID);
 
 static void possible_intersection(SweepEvent& a, SweepEvent& b, EventQueue& queue,
 		std::vector<std::unique_ptr<SweepEvent>>& eventOwner);
@@ -27,14 +30,50 @@ static void divide_segment(EventQueue& queue, std::vector<std::unique_ptr<SweepE
 static Contour& initialize_contour_from_context(std::vector<Contour>& contours, const SweepEvent& event,
 		uint32_t contourID);
 
+static void deep_copy_shape(CPUQuadraticShape& dst, const CPUQuadraticShape& src);
+
 void martinez_boolean_bezier(const CPUQuadraticShape& subject, const CPUQuadraticShape& clipping,
 		CPUQuadraticShape& result, BooleanOperation operation) {
+	// Check trivial results: when at least one shape is empty
+	if (subject.paths.empty() || clipping.paths.empty()) {
+		switch (operation) {
+			case BooleanOperation::INTERSECTION:
+				return;
+			case BooleanOperation::DIFFERENCE:
+				deep_copy_shape(result, subject);
+				return;
+			case BooleanOperation::UNION:
+			case BooleanOperation::XOR:
+				deep_copy_shape(result, subject.paths.empty() ? clipping : subject);
+				return;
+		}
+	}
+
+	auto sbbox = AABB_INVALID;
+	auto cbbox = AABB_INVALID;
+
 	EventQueue eventQueue;
 	std::vector<std::unique_ptr<SweepEvent>> eventOwner;
-	fill_queue(eventQueue, eventOwner, subject, clipping, operation);
+	fill_queue(eventQueue, eventOwner, subject, clipping, sbbox, cbbox, operation);
+
+	// Trivial result: Complete lack of intersection
+	if (!sbbox.intersects(cbbox)) {
+		switch (operation) {
+			case BooleanOperation::INTERSECTION:
+				return;
+			case BooleanOperation::DIFFERENCE:
+				deep_copy_shape(result, subject);
+				return;
+			case BooleanOperation::UNION:
+			case BooleanOperation::XOR:
+				deep_copy_shape(result, subject);
+				deep_copy_shape(result, clipping);
+				return;
+		}
+	}
 
 	std::vector<SweepEvent*> sortedEvents;
-	subdivide_segments(eventQueue, eventOwner, sortedEvents, subject, clipping, operation);
+	subdivide_segments(eventQueue, eventOwner, sortedEvents, subject, clipping, sbbox, cbbox, operation);
 
 	std::vector<Contour> contours;
 	connect_edges(sortedEvents, contours, operation);
@@ -73,7 +112,8 @@ void martinez_boolean_bezier(const CPUQuadraticShape& subject, const CPUQuadrati
 }
 
 void BezierMartinez::fill_queue(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
-		const CPUQuadraticShape& subject, const CPUQuadraticShape& clipping, BooleanOperation operation) {
+		const CPUQuadraticShape& subject, const CPUQuadraticShape& clipping, AABB& sbbox, AABB& cbbox,
+		BooleanOperation operation) {
 	uint32_t contourID = 0;
 
 	for (size_t i = 0; i < subject.paths.size(); ++i) {
@@ -83,7 +123,7 @@ void BezierMartinez::fill_queue(EventQueue& queue, std::vector<std::unique_ptr<S
 			++contourID;
 		}
 
-		process_path(queue, eventOwner, subject.paths[i], true, contourID);
+		process_path(queue, eventOwner, subject.paths[i], sbbox, true, contourID);
 	}
 
 	for (size_t i = 0; i < clipping.paths.size(); ++i) {
@@ -93,7 +133,7 @@ void BezierMartinez::fill_queue(EventQueue& queue, std::vector<std::unique_ptr<S
 			++contourID;
 		}
 
-		process_path(queue, eventOwner, clipping.paths[i], false, contourID);
+		process_path(queue, eventOwner, clipping.paths[i], cbbox, false, contourID);
 	}
 }
 
@@ -135,9 +175,15 @@ static void add_monotonic_bezier(EventQueue& queue, std::vector<std::unique_ptr<
 }
 
 static void process_path(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
-		const CPUQuadraticPath& path, bool isSubject, uint32_t contourID) {
+		const CPUQuadraticPath& path, AABB& bbox, bool isSubject, uint32_t contourID) {
 	for (size_t i = 0; i < path.points.size() - 1; i += 2) {
 		QuadraticBezier<real_t> bezier{path.points[i], path.points[i + 1], path.points[i + 2]};
+		auto bounds = bezier.calc_aabb();
+
+		bbox.minX = std::fmin(bounds[0], bbox.minX);
+		bbox.minY = std::fmin(bounds[1], bbox.minY);
+		bbox.maxX = std::fmax(bounds[2], bbox.maxX);
+		bbox.maxY = std::fmax(bounds[3], bbox.maxY);
 
 		std::array<QuadraticBezier<real_t>, 2> monotonicSegments;
 		bool alreadyMonotonic = Hatch::split_into_major_monotonic_segments(bezier, monotonicSegments);
@@ -154,14 +200,21 @@ static void process_path(EventQueue& queue, std::vector<std::unique_ptr<SweepEve
 
 void BezierMartinez::subdivide_segments(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
 		std::vector<SweepEvent*>& sortedEvents, const CPUQuadraticShape& subject,
-		const CPUQuadraticShape& clipping, BooleanOperation operation) {
+		const CPUQuadraticShape& clipping, const AABB& sbbox, const AABB& cbbox, BooleanOperation operation) {
 	std::multiset<SweepEvent*, CompareSegmentsLess> sweepLine;
+
+	auto rightBound = std::fminf(sbbox.maxX, cbbox.maxX);
 
 	while (!queue.empty()) {
 		auto* pEvent = queue.top();
 		queue.pop();
 
 		sortedEvents.emplace_back(pEvent);
+
+		if ((operation == BooleanOperation::INTERSECTION && pEvent->point.x > rightBound)
+				|| (operation == BooleanOperation::DIFFERENCE && pEvent->point.x > sbbox.maxX)) {
+			break;
+		}
 
 		if (pEvent->left) {
 			auto next = sweepLine.insert(pEvent);
@@ -524,6 +577,19 @@ static float signed_area(const glm::vec2& p0, const glm::vec2& p1, const glm::ve
 	}
 }
 
+static void deep_copy_shape(CPUQuadraticShape& dst, const CPUQuadraticShape& src) {
+	for (auto& path : src.paths) {
+		dst.paths.emplace_back();
+		auto& dstPath = dst.paths.back();
+		dstPath.points = path.points;
+		dstPath.flags = path.flags;
+	}
+
+	dst.fillColor = src.fillColor;
+	dst.strokeColor = src.strokeColor;
+	dst.strokeWidth = src.strokeWidth;
+}
+
 bool SweepEvent::is_below(const glm::vec2& p) const {
 	return left
 			? (signed_area(point, otherEvent->point, p) > 0)
@@ -597,15 +663,15 @@ std::strong_ordering CompareSegments::operator()(const SweepEvent* a, const Swee
 			|| signed_area(a->point, a->otherEvent->point, b->otherEvent->point) != 0) {
 		// If they share their left endpoint use the right endpoint to sort
 		// NOTE: Candidate for epsilonEqual
-		//if (a->point == b->point) {
-		if (point_equals(a->point, b->point)) {
+		if (a->point == b->point) {
+		//if (point_equals(a->point, b->point)) {
 			return a->is_below(b->otherEvent->point) ? std::strong_ordering::less
 					: std::strong_ordering::greater;
 		}
 
 		// Different left endpoint: use the left endpoint to sort
-		//if (a->point[major] == b->point[major]) {
-		if (std::abs(a->point[major] - b->point[major]) < 1e-4) {
+		if (a->point[major] == b->point[major]) {
+		//if (std::abs(a->point[major] - b->point[major]) < 1e-4) {
 			return a->point[minor] < b->point[minor] ? std::strong_ordering::less
 					: std::strong_ordering::greater;
 			}
