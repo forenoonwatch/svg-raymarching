@@ -8,6 +8,8 @@
 
 namespace Martinez {
 
+using real_t = double;
+
 enum class EdgeType {
 	NORMAL,
 	NON_CONTRIBUTING,
@@ -33,7 +35,7 @@ struct AABB {
 };
 
 struct SweepEvent {
-	glm::vec2 point;
+	glm::vec<2, real_t> point;
 	SweepEvent* otherEvent{nullptr};
 	uint32_t contourID{};
 	// Edge contribution type
@@ -54,8 +56,8 @@ struct SweepEvent {
 	size_t otherPos;
 	uint32_t outputContourID;
 
-	bool is_below(const glm::vec2& p) const;
-	bool is_above(const glm::vec2& p) const;
+	bool is_below(const glm::vec<2, real_t>& p) const;
+	bool is_above(const glm::vec<2, real_t>& p) const;
 
 	bool is_vertical() const;
 	bool is_in_result() const;
@@ -99,6 +101,12 @@ void order_events(const std::vector<SweepEvent*>& sortedEvents, std::vector<Swee
 size_t next_pos(size_t pos, const std::vector<SweepEvent*>& resultEvents, const std::vector<bool>& processed,
 		size_t origPos);
 
-float signed_area(const glm::vec2& p0, const glm::vec2& p1, const glm::vec2& p2);
+real_t signed_area(const glm::vec<2, real_t>& p0, const glm::vec<2, real_t>& p1,
+		const glm::vec<2, real_t>& p2);
+bool points_are_collinear(const glm::vec<2, real_t>& p0, const glm::vec<2, real_t>& p1,
+		const glm::vec<2, real_t>& p2);
+
+constexpr const real_t LINEAR_EPSILON = 1e-4;
+constexpr const real_t COLINEARITY_EPSILON = 1e-4;
 
 }

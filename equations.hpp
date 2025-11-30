@@ -71,9 +71,9 @@ struct EqCubic {
 
 		unsigned rootCount = 0;
 
-		if (D == 0) {
+		if (D == float_t(0.0)) {
 			// one triple solution
-			if (q == 0) {
+			if (q == float_t(0.0)) {
 				s[rootCount++] = float_t(0.0);
 			}
 			// one single and one double solution
@@ -84,7 +84,7 @@ struct EqCubic {
 			}
 		}
 		// Three real solutions
-		else if (D < 0) {
+		else if (D < float_t(0.0)) {
 			auto phi = float_t(1.0) / 3 * std::acos(-q / sqrt(-cbp));
 			auto t = 2 * std::sqrt(-p);
 

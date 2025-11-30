@@ -32,7 +32,7 @@ static bool load_polygon(simdjson::ondemand::array& coords, Polygon& polygon, co
 				return false;
 			}
 
-			float pointValues[2];
+			real_t pointValues[2];
 			size_t counter = 0;
 
 			for (auto num : aryPoint) {
@@ -152,10 +152,10 @@ TEST_CASE("fill event queue", "martinez") {
 		REQUIRE(cbbox == AABB{54.5f, -198, 239.5f, 33.5f});
 	}
 
-	glm::vec2 points[] = {{20, -23.5f}, {20, -23.5f}, {54.5f, -170.5f}, {54.5f, -170.5f}, {140.5f, 33.5f},
+	glm::vec<2, real_t> points[] = {{20, -23.5f}, {20, -23.5f}, {54.5f, -170.5f}, {54.5f, -170.5f}, {140.5f, 33.5f},
 		{140.5f, 33.5f}, {170.f, 74.f}, {170.f, 74.f}, {226.5f, -113.5f}, {226.5f, -113.5f}, {239.5f, -198},
 		{239.5f, -198}};
-	glm::vec2 otherPoints[] = {{226.5f, -113.5f}, {170.f, 74.f}, {239.5f, -198}, {140.5f, 33.5f},
+	glm::vec<2, real_t> otherPoints[] = {{226.5f, -113.5f}, {170.f, 74.f}, {239.5f, -198}, {140.5f, 33.5f},
 		{54.5f, -170.5f}, {239.5f, -198}, {20, -23.5f}, {226.5f, -113.5f}, {20, -23.5f}, {170, 74},
 		{54.5f, -170.5f}, {140.5f, 33.5f}};
 
@@ -181,8 +181,8 @@ TEST_CASE("fill event queue", "martinez") {
 
 TEST_CASE("queue", "martinez") {
 	SECTION("queue should process least(by x) sweep event first") {
-		auto e1 = std::make_unique<SweepEvent>(glm::vec2(0, 0));
-		auto e2 = std::make_unique<SweepEvent>(glm::vec2(0.5f, 0.5f));
+		auto e1 = std::make_unique<SweepEvent>(glm::vec<2, real_t>(0, 0));
+		auto e2 = std::make_unique<SweepEvent>(glm::vec<2, real_t>(0.5f, 0.5f));
 		EventQueue queue;
 
 		queue.push(e1.get());
@@ -195,8 +195,8 @@ TEST_CASE("queue", "martinez") {
 	}
 
 	SECTION("queue should process least(by y) sweep event first") {
-		auto e1 = std::make_unique<SweepEvent>(glm::vec2(0, 0));
-		auto e2 = std::make_unique<SweepEvent>(glm::vec2(0, 0.5f));
+		auto e1 = std::make_unique<SweepEvent>(glm::vec<2, real_t>(0, 0));
+		auto e2 = std::make_unique<SweepEvent>(glm::vec<2, real_t>(0, 0.5f));
 		EventQueue queue;
 
 		queue.push(e1.get());
@@ -209,8 +209,8 @@ TEST_CASE("queue", "martinez") {
 	}
 
 	SECTION("queue should process least(by left prop) sweep event first") {
-		auto e1 = std::make_unique<SweepEvent>(glm::vec2(0, 0), nullptr, 0, EdgeType::NORMAL, true);
-		auto e2 = std::make_unique<SweepEvent>(glm::vec2(0, 0), nullptr, 0, EdgeType::NORMAL, false);
+		auto e1 = std::make_unique<SweepEvent>(glm::vec<2, real_t>(0, 0), nullptr, 0, EdgeType::NORMAL, true);
+		auto e2 = std::make_unique<SweepEvent>(glm::vec<2, real_t>(0, 0), nullptr, 0, EdgeType::NORMAL, false);
 		EventQueue queue;
 
 		queue.push(e1.get());
@@ -281,8 +281,8 @@ TEST_CASE("compare segments not collinear", "martinez") {
 		auto maxNode = tree.end();
 		--maxNode;
 
-		REQUIRE((*maxNode)->otherEvent->point == glm::vec2{2, 3});
-		REQUIRE((*tree.begin())->otherEvent->point == glm::vec2{1, 1});
+		REQUIRE((*maxNode)->otherEvent->point == glm::vec<2, real_t>{2, 3});
+		REQUIRE((*tree.begin())->otherEvent->point == glm::vec<2, real_t>{1, 1});
 	}
 
 	SECTION("different left point - right point y coord to sort") {
@@ -298,8 +298,8 @@ TEST_CASE("compare segments not collinear", "martinez") {
 		auto maxNode = tree.end();
 		--maxNode;
 
-		REQUIRE((*tree.begin())->otherEvent->point == glm::vec2{1, 1});
-		REQUIRE((*maxNode)->otherEvent->point == glm::vec2{2, 3});
+		REQUIRE((*tree.begin())->otherEvent->point == glm::vec<2, real_t>{1, 1});
+		REQUIRE((*maxNode)->otherEvent->point == glm::vec<2, real_t>{2, 3});
 	}
 
 	SECTION("events order in sweep line") {

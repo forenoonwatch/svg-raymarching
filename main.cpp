@@ -159,6 +159,163 @@ static Polygon quad_shape_to_polygon(const CPUQuadraticShape& shape) {
 	return poly;
 }
 
+struct MartinezDebug {
+	std::vector<std::unique_ptr<Martinez::SweepEvent>> ownedEvents;
+	Martinez::EventQueue queue;
+	Martinez::AABB sbbox{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+	Martinez::AABB cbbox{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+	std::vector<Martinez::SweepEvent*> sortedEvents;
+
+	void build(const Polygon& subj, const Polygon& clip, BooleanOperation op) {
+		Martinez::fill_queue(queue, ownedEvents, subj, clip, sbbox, cbbox, op);
+		Martinez::subdivide_segments(queue, ownedEvents, sortedEvents, subj, clip, sbbox, cbbox, op);
+	}
+
+	void draw(NVGcontext* vg) {
+		for (auto* event : sortedEvents) {
+			if (!event->left) {
+				continue;
+			}
+
+			bool inResult = event->is_in_result();
+
+			nvgBeginPath(vg);
+			nvgMoveTo(vg, event->point.x, event->point.y);
+			nvgLineTo(vg, event->otherEvent->point.x, event->otherEvent->point.y);
+			nvgStrokeWidth(vg, 2.f);
+			nvgStrokeColor(vg, inResult ? nvgRGBA(0, 255, 0, 255) : nvgRGBA(128, 128, 128, 255));
+			nvgStroke(vg);
+
+			nvgBeginPath(vg);
+			nvgCircle(vg, event->point.x, event->point.y, 3);
+			nvgFillColor(vg, nvgRGBA(255, 0, 0, 255));
+			nvgFill(vg);
+
+			nvgBeginPath(vg);
+			nvgCircle(vg, event->otherEvent->point.x, event->otherEvent->point.y, 3);
+			nvgFillColor(vg, nvgRGBA(0, 0, 255, 255));
+			nvgFill(vg);
+		}
+	}
+};
+
+struct BezierMartinezDebug {
+	std::vector<std::unique_ptr<BezierMartinez::SweepEvent>> ownedEvents;
+	BezierMartinez::EventQueue queue;
+	Martinez::AABB sbbox{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+	Martinez::AABB cbbox{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+	std::vector<BezierMartinez::SweepEvent*> sortedEvents;
+	std::vector<glm::vec<2, BezierMartinez::real_t>> unfoundIntersections;
+	std::vector<glm::vec<2, BezierMartinez::real_t>> fromOrthoUnfound;
+
+	void build(const CPUQuadraticShape& subj, const CPUQuadraticShape& clip, BooleanOperation op) {
+		int major = static_cast<int>(Hatch::SELECTED_MAJOR_AXIS);
+		int minor = 1 - major;
+
+		BezierMartinez::fill_queue(queue, ownedEvents, subj, clip, sbbox, cbbox, op);
+		BezierMartinez::subdivide_segments(queue, ownedEvents, sortedEvents, subj, clip, sbbox, cbbox, op);
+
+		for (auto* event : sortedEvents) {
+			if (!event->left) {
+				continue;
+			}
+
+			assert(event->t < event->otherEvent->t);
+		}
+
+		for (size_t i = 0; i < sortedEvents.size(); ++i) {
+			if (!sortedEvents[i]->left /*|| sortedEvents[i]->is_in_result()*/) {
+				continue;
+			}
+
+			Hatch::Segment segA{&sortedEvents[i]->bezier, sortedEvents[i]->t, sortedEvents[i]->otherEvent->t};
+
+			for (size_t j = i + 1; j < sortedEvents.size(); ++j) {
+				if (!sortedEvents[j]->left /*|| sortedEvents[j]->is_in_result()*/) {
+					continue;
+				}
+
+				Hatch::Segment segB{&sortedEvents[j]->bezier, sortedEvents[j]->t,
+						sortedEvents[j]->otherEvent->t};
+
+				auto sects = segA.intersect(segB);
+
+				for (auto t : sects) {
+					if (std::isnan(t) || t <= segB.tStart || t >= segB.tEnd) {
+						continue;
+					}
+
+					auto point = segB.originalBezier->evaluate(t);
+					auto s = Hatch::intersect_ortho(*segA.originalBezier, point[major], major);
+
+					if (!std::isnan(s) && s > segA.tStart && s < segA.tEnd) {
+						auto ptA = segA.originalBezier->evaluate(s);
+						unfoundIntersections.emplace_back(point);
+						fromOrthoUnfound.emplace_back(ptA);
+					}
+				}
+			}
+		}
+	}
+
+	void draw(NVGcontext* vg) {
+		for (auto* event : sortedEvents) {
+			if (!event->left) {
+				continue;
+			}
+
+			Hatch::Segment seg{&event->bezier, event->t, event->otherEvent->t};
+
+			bool inResult = event->is_in_result();
+			bool linear = Hatch::is_line_segment(event->bezier);
+			bool slcm = seg.is_straight_line_constant_major();
+
+			auto bezier = event->bezier.split_from_min_to_max(event->t, event->otherEvent->t);
+
+			nvgBeginPath(vg);
+			nvgMoveTo(vg, event->point.x, event->point.y);
+			//nvgLineTo(vg, event->otherEvent->point.x, event->otherEvent->point.y);
+			//nvgQuadTo(vg, bezier.P1.x, bezier.P1.y, bezier.P2.x, bezier.P2.y);
+			nvgQuadTo(vg, bezier.P1.x, bezier.P1.y, event->otherEvent->point.x, event->otherEvent->point.y);
+			nvgStrokeWidth(vg, 2.f);
+			nvgStrokeColor(vg, inResult ? nvgRGBA(0, 255, 0, 255) : nvgRGBA(128, 128, 128, 255));
+			//nvgStrokeColor(vg, linear ? nvgRGBA(255, 255, 0, 255) : nvgRGBA(0, 0, 255, 255));
+			
+			auto gradGreen = nvgLinearGradient(vg, event->point.x, event->point.y, event->otherEvent->point.x,
+					event->otherEvent->point.y, nvgRGBA(0, 64, 0, 255), nvgRGBA(0, 255, 0, 255));
+			auto gradGrey = nvgLinearGradient(vg, event->point.x, event->point.y, event->otherEvent->point.x,
+					event->otherEvent->point.y, nvgRGBA(64, 64, 64, 255), nvgRGBA(128, 128, 128, 255));
+
+			nvgStrokePaint(vg, inResult ? gradGreen : gradGrey);
+			nvgStroke(vg);
+
+			nvgBeginPath(vg);
+			nvgCircle(vg, event->point.x, event->point.y, 3);
+			nvgFillColor(vg, nvgRGBA(255, 0, 0, 255));
+			//nvgFill(vg);
+
+			nvgBeginPath(vg);
+			nvgCircle(vg, event->otherEvent->point.x, event->otherEvent->point.y, 3);
+			nvgFillColor(vg, nvgRGBA(0, 0, 255, 255));
+			//nvgFill(vg);
+		}
+
+		for (auto pt : fromOrthoUnfound) {
+			nvgBeginPath(vg);
+			nvgCircle(vg, pt.x, pt.y, 2);
+			nvgFillColor(vg, nvgRGBA(255, 255, 0, 255));
+			nvgFill(vg);
+		}
+
+		for (auto pt : unfoundIntersections) {
+			nvgBeginPath(vg);
+			nvgCircle(vg, pt.x, pt.y, 2);
+			nvgFillColor(vg, nvgRGBA(0, 255, 255, 255));
+			nvgFill(vg);
+		}
+	}
+};
+
 int main() {
 	glfwInit();
 
@@ -254,10 +411,23 @@ int main() {
 		},
 	};
 
-	auto polySubj = quad_shape_to_polygon(subj);
-	auto polyClip = quad_shape_to_polygon(clip);
+	/*Polygon polySubj{
+		.subShapes = {
+			{.points = {{200, 200}, {300, 200}, {300, 250}, {200, 250}, {200, 200}}},
+			{.points = {{210, 210}, {290, 210}, {290, 240}, {210, 240}, {210, 210}}},
+		},
+	};
+
+	Polygon polyClip{
+		.subShapes = {
+			{.points = {{225, 175}, {275, 175}, {275.001f, 275}, {225, 275}, {225, 175}}},
+		},
+	};*/
+
+	auto polySubj = quad_shape_to_polygon(svgShapes[0]);
+	auto polyClip = quad_shape_to_polygon(svgShapes[1]);
 	Polygon polyRes;
-	martinez_boolean(polySubj, polyClip, polyRes, BooleanOperation::XOR);
+	martinez_boolean(polySubj, polyClip, polyRes, BooleanOperation::UNION);
 
 	CPUQuadraticShape resShape;
 	martinez_boolean_bezier(subj, clip, resShape, BooleanOperation::XOR);
@@ -276,8 +446,6 @@ int main() {
 		auto& subj = unionStack.back();
 		auto& clip = unionStack[unionStack.size() - 2];
 
-		puts("Got here");
-
 		CPUQuadraticShape result;
 		martinez_boolean_bezier(subj, clip, result, BooleanOperation::UNION);
 
@@ -291,7 +459,7 @@ int main() {
 		break;
 	}
 
-	generate_hatch_boxes(unionStack.back(), hatchBoxes);
+	//generate_hatch_boxes(unionStack.back(), hatchBoxes);
 	//generate_hatch_boxes(unionStack[unionStack.size() - 2], hatchBoxes);
 	//generate_hatch_boxes(unionStack[unionStack.size() - 3], hatchBoxes);
 
@@ -306,6 +474,9 @@ int main() {
 
 	auto lastTime = glfwGetTime();
 	int step = 0;
+
+	BezierMartinezDebug bmd;
+	bmd.build(svgShapes[0], svgShapes[1], BooleanOperation::UNION);
 
 	while (!glfwWindowShouldClose(window)) {
 		auto currTime = glfwGetTime();
@@ -332,6 +503,10 @@ int main() {
 
 		nvgBeginFrame(vg, g_width, g_height, 1.0);
 
+		bmd.draw(vg);
+
+		//draw_polygon(vg, polyRes, {}, nvgRGBA(0, 255, 0, 255));
+
 		for (auto& box : hatchBoxes) {
 			hatchShader.bind();
 
@@ -341,7 +516,7 @@ int main() {
 			glUniform4fv(1, 1, extents);
 			glUniform2fv(2, 3, reinterpret_cast<const float*>(&box.curveMin[0]));
 			glUniform2fv(5, 3, reinterpret_cast<const float*>(&box.curveMax[0]));
-			glDrawArrays(GL_TRIANGLES, 0, 6);
+			//glDrawArrays(GL_TRIANGLES, 0, 6);
 
 			/*nvgBeginPath(vg);
 			nvgMoveTo(vg, box.aabbMin.x, box.aabbMin.y);

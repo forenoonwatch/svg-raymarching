@@ -22,15 +22,15 @@ static void compute_fields(SweepEvent& event, SweepEvent* prev, BooleanOperation
 static int possible_intersection(SweepEvent& a, SweepEvent& b, EventQueue& queue,
 		std::vector<std::unique_ptr<SweepEvent>>& eventOwner);
 static void divide_segment(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
-		SweepEvent& event, const glm::vec2& p);
+		SweepEvent& event, const glm::vec<2, real_t>& p);
 
 static Contour& initialize_contour_from_context(std::vector<Contour>& contours, const SweepEvent& event,
 		uint32_t contourID);
 
-static float cross(const glm::vec2& a, const glm::vec2& b);
+static real_t cross(const glm::vec<2, real_t>& a, const glm::vec<2, real_t>& b);
 
-static bool point_equals(const glm::vec2& a, const glm::vec2& b) {
-	return glm::all(glm::epsilonEqual(a, b, 1e-4f));
+static bool point_equals(const glm::vec<2, real_t>& a, const glm::vec<2, real_t>& b) {
+	return glm::all(glm::epsilonEqual(a, b, LINEAR_EPSILON));
 }
 
 static void deep_copy_shape(Polygon& dst, const Polygon& src);
@@ -461,7 +461,7 @@ static int possible_intersection(SweepEvent& a, SweepEvent& b, EventQueue& queue
 }
 
 static void divide_segment(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
-		SweepEvent& event, const glm::vec2& p) {
+		SweepEvent& event, const glm::vec<2, real_t>& p) {
 	auto r = std::make_unique<SweepEvent>(p, &event, event.contourID, EdgeType::NORMAL, false, event.isSubject);
 	auto l = std::make_unique<SweepEvent>(p, event.otherEvent, event.contourID, EdgeType::NORMAL, true,
 			event.isSubject);
@@ -648,7 +648,7 @@ size_t Martinez::next_pos(size_t pos, const std::vector<SweepEvent*>& resultEven
 	return newPos;
 }
 
-static float cross(const glm::vec2& a, const glm::vec2& b) {
+static real_t cross(const glm::vec<2, real_t>& a, const glm::vec<2, real_t>& b) {
 	return a.x * b.y - a.y * b.x;
 }
 
@@ -660,8 +660,19 @@ static void deep_copy_shape(Polygon& dst, const Polygon& src) {
 	}
 }
 
-float Martinez::signed_area(const glm::vec2& p0, const glm::vec2& p1, const glm::vec2& p2) {
-	return (p0.x - p2.x) * (p1.y - p2.y) - (p1.x - p2.x) * (p0.y - p2.y);
+real_t Martinez::signed_area(const glm::vec<2, real_t>& p0, const glm::vec<2, real_t>& p1,
+		const glm::vec<2, real_t>& p2) {
+	return cross(p0 - p2, p1 - p2);
+	//return (p0.x - p2.x) * (p1.y - p2.y) - (p1.x - p2.x) * (p0.y - p2.y);
+}
+
+bool Martinez::points_are_collinear(const glm::vec<2, real_t>& p0, const glm::vec<2, real_t>& p1,
+		const glm::vec<2, real_t>& p2) {
+	auto p02 = p0 - p2;
+	auto p12 = p1 - p2;
+	auto cr = cross(p02, p12);
+	auto sqLen = glm::dot(p02, p02) + glm::dot(p12, p12);
+	return cr * cr <= COLINEARITY_EPSILON * sqLen;
 }
 
 bool AABB::operator==(const AABB& other) const {
@@ -672,19 +683,20 @@ bool AABB::intersects(const AABB& other) const {
 	return maxX >= other.minX && maxY >= other.minY && minX <= other.maxX && minY <= other.maxY;
 }
 
-bool SweepEvent::is_below(const glm::vec2& p) const {
+bool SweepEvent::is_below(const glm::vec<2, real_t>& p) const {
 	return left
 			? (signed_area(point, otherEvent->point, p) > 0)
 			: (signed_area(otherEvent->point, point, p) > 0);
 }
 
-bool SweepEvent::is_above(const glm::vec2& p) const {
+bool SweepEvent::is_above(const glm::vec<2, real_t>& p) const {
 	return !is_below(p);
 }
 
 bool SweepEvent::is_vertical() const {
 	// NOTE: Candidate for epsilonEqual
-	return point.x == otherEvent->point.x;
+	return std::abs(point.x - otherEvent->point.x) < LINEAR_EPSILON;
+	//return point.x == otherEvent->point.x;
 }
 
 bool SweepEvent::is_in_result() const {
@@ -693,19 +705,23 @@ bool SweepEvent::is_in_result() const {
 
 std::strong_ordering CompareEvents::operator()(const SweepEvent* a, const SweepEvent* b) const {
 	// Different x coordinate
-	if (a->point.x > b->point.x) {
-		return std::strong_ordering::greater;
-	}
-	else if (a->point.x < b->point.x) {
-		return std::strong_ordering::less;
+	if (std::abs(a->point.x - b->point.x) > LINEAR_EPSILON) {
+		if (a->point.x > b->point.x) {
+			return std::strong_ordering::greater;
+		}
+		else if (a->point.x < b->point.x) {
+			return std::strong_ordering::less;
+		}
 	}
 
 	// Different points, but same x coordinate
-	if (a->point.y > b->point.y) {
-		return std::strong_ordering::greater;
-	}
-	else if (a->point.y < b->point.y) {
-		return std::strong_ordering::less;
+	if (std::abs(a->point.y - b->point.y) > LINEAR_EPSILON) {
+		if (a->point.y > b->point.y) {
+			return std::strong_ordering::greater;
+		}
+		else if (a->point.y < b->point.y) {
+			return std::strong_ordering::less;
+		}
 	}
 
 	// Special cases:
@@ -716,7 +732,8 @@ std::strong_ordering CompareEvents::operator()(const SweepEvent* a, const SweepE
 	}
 
 	// Same coordinates, both events are left endpoints or right endpoints, but not collinear
-	if (signed_area(a->point, a->otherEvent->point, b->otherEvent->point) != 0) {
+	//if (signed_area(a->point, a->otherEvent->point, b->otherEvent->point) != 0) {
+	if (!points_are_collinear(a->point, a->otherEvent->point, b->otherEvent->point)) {
 		// The event associated with the bottom segment is processed first
 		return a->is_below(b->otherEvent->point) ? std::strong_ordering::less : std::strong_ordering::greater;
 	}
@@ -734,17 +751,21 @@ std::strong_ordering CompareSegments::operator()(const SweepEvent* a, const Swee
 	}
 
 	// Segments are not collinear
-	if (signed_area(a->point, a->otherEvent->point, b->point) != 0
-			|| signed_area(a->point, a->otherEvent->point, b->otherEvent->point) != 0) {
+	//if (signed_area(a->point, a->otherEvent->point, b->point) != 0
+			//|| signed_area(a->point, a->otherEvent->point, b->otherEvent->point) != 0) {
+	if (!points_are_collinear(a->point, a->otherEvent->point, b->point)
+			|| !points_are_collinear(a->point, a->otherEvent->point, b->otherEvent->point)) {
 		// If they share their left endpoint use the right endpoint to sort
 		// NOTE: Candidate for epsilonEqual
-		if (a->point == b->point) {
+		//if (a->point == b->point) {
+		if (point_equals(a->point, b->point)) {
 			return a->is_below(b->otherEvent->point) ? std::strong_ordering::less
 					: std::strong_ordering::greater;
 		}
 
 		// Different left endpoint: use the left endpoint to sort
-		if (a->point.x == b->point.x) {
+		//if (a->point.x == b->point.x) {
+		if (std::abs(a->point.x - b->point.x) < LINEAR_EPSILON) {
 			return a->point.y < b->point.y ? std::strong_ordering::less : std::strong_ordering::greater;
 		}
 
@@ -762,9 +783,11 @@ std::strong_ordering CompareSegments::operator()(const SweepEvent* a, const Swee
 	// Same polygon
 	if (a->isSubject == b->isSubject) {
 		// NOTE: Candidate for epsilonEqual
-		if (a->point == b->point) {
+		//if (a->point == b->point) {
+		if (point_equals(a->point, b->point)) {
 			// NOTE: Candidate for epsilonEqual
-			if (a->otherEvent->point == b->otherEvent->point) {
+			//if (a->otherEvent->point == b->otherEvent->point) {
+			if (point_equals(a->otherEvent->point, b->otherEvent->point)) {
 				return std::strong_ordering::equal;
 			}
 

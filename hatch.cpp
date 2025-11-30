@@ -23,9 +23,6 @@ static Pair<glm::vec<2, real_t>, glm::vec<2, real_t>> calc_bezier_bounding_box_m
 static void transform_curves(const QuadraticBezier<real_t>& bezier, const glm::vec<2, real_t>& aabbMin,
 		const glm::vec<2, real_t>& aabbMax, glm::vec2* output);
 
-// FIXME: Does not properly detect (P0, P1, P1) segments
-static bool is_line_segment(const QuadraticBezier<real_t>& bezier);
-
 template <typename float_t>
 static float_t cross(const glm::vec<2, float_t>& a, const glm::vec<2, float_t>& b) {
 	return a.x * b.y - a.y * b.x;
@@ -394,17 +391,18 @@ static void transform_curves(const QuadraticBezier<real_t>& bezier, const glm::v
 	output[2] = transformedBezier.P2;
 }
 
-static bool is_line_segment(const QuadraticBezier<real_t>& bezier) {
-	static constexpr const real_t EPSILON = 1e-4;
-	//auto quadratic = QuadraticCurve<real_t>::from_bezier(bezier.P0, bezier.P1, bezier.P2);
-	//auto lenSqA = glm::dot(quadratic.A, quadratic.A);
-	//return lenSqA < std::exp(-23.f) * glm::dot(quadratic.B, quadratic.B);
+bool Hatch::is_line_segment(const QuadraticBezier<real_t>& bezier) {
+	auto quadratic = QuadraticCurve<real_t>::from_bezier(bezier.P0, bezier.P1, bezier.P2);
+	auto lenSqA = glm::dot(quadratic.A, quadratic.A);
+	return lenSqA < std::exp(-23.f) * glm::dot(quadratic.B, quadratic.B);
+
+	/*static constexpr const real_t EPSILON = 1e-15;
 	
 	auto p10 = bezier.P1 - bezier.P0;
 	auto p20 = bezier.P2 - bezier.P0;
-	auto cr = cross(bezier.P1 - bezier.P0, bezier.P2 - bezier.P0);
+	auto cr = cross(p10, p20);
 	auto sqLen = glm::dot(p10, p10) + glm::dot(p20, p20);
-	return (cr * cr) < EPSILON * sqLen;
+	return (cr * cr) < EPSILON * sqLen;*/
 }
 
 std::array<real_t, 2> Segment::intersect(const Segment& other) const {
@@ -416,8 +414,8 @@ std::array<real_t, 2> Segment::intersect(const Segment& other) const {
 	int resultIdx = 0;
 
 	// Use line intersections if one or both of the beziers are linear (a = 0)
-	bool selfLinear = is_line_segment(*originalBezier);
-	bool otherLinear = is_line_segment(*other.originalBezier);
+	bool selfLinear = true;//is_line_segment(*originalBezier);
+	bool otherLinear = true;//is_line_segment(*other.originalBezier);
 
 	if (selfLinear && otherLinear) {
 		// Line/line intersection
@@ -436,7 +434,7 @@ std::array<real_t, 2> Segment::intersect(const Segment& other) const {
 				&& std::min(x3, x4) <= intersectionPoint.x && y3 <= intersectionPoint.y
 				&& std::max(x3, x4) >= intersectionPoint.x && y4 >= intersectionPoint.y) {
 			// Gets t for "other" by using intersectOrtho
-			auto otherT = intersect_ortho(*other.originalBezier, intersectionPoint.y, major);
+			auto otherT = intersect_ortho(*other.originalBezier, intersectionPoint[major], major);
 			auto intersectionMajor = other.originalBezier->evaluate(otherT)[major];
 			auto thisT = intersect_ortho(*originalBezier, intersectionMajor, major);
 

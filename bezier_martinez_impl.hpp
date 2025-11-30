@@ -38,8 +38,8 @@ struct SweepEvent {
 	size_t otherPos;
 	uint32_t outputContourID;
 
-	bool is_below(const glm::vec2& p) const;
-	bool is_above(const glm::vec2& p) const;
+	bool is_below(const glm::vec<2, real_t>& p) const;
+	bool is_above(const glm::vec<2, real_t>& p) const;
 
 	bool is_vertical() const;
 	bool is_in_result() const;

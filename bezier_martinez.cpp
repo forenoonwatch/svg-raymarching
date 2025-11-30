@@ -9,13 +9,14 @@
 #include <utility>
 
 #include <glm/gtc/epsilon.hpp>
+#include <glm/mat2x2.hpp>
 
 using namespace BezierMartinez;
 
 static constexpr const AABB AABB_INVALID = {FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
 
 static bool point_equals(const glm::vec<2, real_t>& a, const glm::vec<2, real_t>& b) {
-	return glm::all(glm::epsilonEqual(a, b, real_t(1e-4)));
+	return glm::all(glm::epsilonEqual(a, b, Martinez::LINEAR_EPSILON));
 }
 
 static void process_path(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
@@ -154,6 +155,8 @@ static void add_monotonic_bezier(EventQueue& queue, std::vector<std::unique_ptr<
 		outputBezier.P1[major] = outputBezier.P0[major];
 	}
 
+	//outputBezier.P1 = (outputBezier.P0 + outputBezier.P2) * 0.5;
+
 	auto e1 = std::make_unique<SweepEvent>(outputBezier.P0, 0.0, outputBezier, nullptr, contourID, false,
 			isSubject);
 	auto e2 = std::make_unique<SweepEvent>(outputBezier.P2, 1.0, outputBezier, e1.get(), contourID, false,
@@ -201,9 +204,15 @@ static void process_path(EventQueue& queue, std::vector<std::unique_ptr<SweepEve
 void BezierMartinez::subdivide_segments(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
 		std::vector<SweepEvent*>& sortedEvents, const CPUQuadraticShape& subject,
 		const CPUQuadraticShape& clipping, const AABB& sbbox, const AABB& cbbox, BooleanOperation operation) {
+	static constexpr const int major = static_cast<int>(Hatch::SELECTED_MAJOR_AXIS);
+	static constexpr const int minor = 1 - major; 
+
 	std::multiset<SweepEvent*, CompareSegmentsLess> sweepLine;
 
-	auto rightBound = std::fminf(sbbox.maxX, cbbox.maxX);
+	auto rightBound = Hatch::SELECTED_MAJOR_AXIS == Hatch::MajorAxis::MAJOR_X
+			? std::min(sbbox.maxX, cbbox.maxX)
+			: std::min(sbbox.maxY, cbbox.maxY);
+	auto subjMaxBound = Hatch::SELECTED_MAJOR_AXIS == Hatch::MajorAxis::MAJOR_X ? sbbox.maxX : sbbox.maxY;
 
 	while (!queue.empty()) {
 		auto* pEvent = queue.top();
@@ -211,8 +220,8 @@ void BezierMartinez::subdivide_segments(EventQueue& queue, std::vector<std::uniq
 
 		sortedEvents.emplace_back(pEvent);
 
-		if ((operation == BooleanOperation::INTERSECTION && pEvent->point.x > rightBound)
-				|| (operation == BooleanOperation::DIFFERENCE && pEvent->point.x > sbbox.maxX)) {
+		if ((operation == BooleanOperation::INTERSECTION && pEvent->point[major] > rightBound)
+				|| (operation == BooleanOperation::DIFFERENCE && pEvent->point[major] > subjMaxBound)) {
 			break;
 		}
 
@@ -259,19 +268,172 @@ void BezierMartinez::subdivide_segments(EventQueue& queue, std::vector<std::uniq
 	}
 }
 
+static real_t cross(const glm::vec<2, real_t>& a, const glm::vec<2, real_t>& b) {
+	return a.x * b.y - a.y * b.x;
+}
+
+template <typename Functor>
+static int handle_intersections(const QuadraticBezier<real_t>& bezierA, real_t startA, real_t endA,
+		const QuadraticBezier<real_t>& bezierB, real_t startB, real_t endB, Functor&& functor) {
+	static constexpr const auto major = static_cast<int>(Hatch::SELECTED_MAJOR_AXIS);
+
+	bool isLinearA = Hatch::is_line_segment(bezierA);
+	bool isLinearB = Hatch::is_line_segment(bezierB);
+
+	if (isLinearA && isLinearB) {
+		auto va = bezierA.P2 - bezierA.P0;
+		auto vb = bezierB.P2 - bezierB.P0;
+		auto e = bezierB.P0 - bezierA.P0;
+
+		if (auto denom = cross(va, vb); denom * denom > real_t(0.0)) {
+			auto s = cross(e, vb) / denom;
+
+			// Not on line segment A
+			if (s < startA || s > endA) {
+				return 0;
+			}
+
+			auto t = cross(e, va) / denom;
+
+			// Not on line segment B
+			if (t < startB || t > endB) {
+				return 0;
+			}
+
+			// The line segments intersect at an end point of both line segments. For the purposes of this
+			// algorithm it is discarded
+			if ((s == startA || s == endA) && (t == startB || t == endB)) {
+				return 0;
+			}
+
+			functor(s, t, bezierB.P0 + vb * t);
+
+			return 1;
+		}
+
+		// FIXME: Colinear case
+	}
+	else if (isLinearA || isLinearB) {
+		auto& line = isLinearA ? bezierA : bezierB;
+		auto& curve = isLinearA ? bezierB : bezierA;
+
+		auto D = glm::normalize(line.P2 - line.P0);
+		glm::mat<2, 2, real_t> rotation{ 
+			{D.x, -D.y}, 
+			{D.y, D.x} 
+		};
+
+		QuadraticBezier<real_t> rotatedCurve{
+			rotation * (curve.P0 - line.P0),
+			rotation * (curve.P1 - line.P0),
+			rotation * (curve.P2 - line.P0)
+		};
+
+		auto intersectionCurveT = Hatch::intersect_ortho(rotatedCurve, 0,
+				(int)Hatch::MajorAxis::MAJOR_Y /* Always in rotation to align with X Axis */);
+		auto intersection = bezierB.evaluate(intersectionCurveT);
+		auto intersectionLineT = Hatch::intersect_ortho(line, intersection[major], major);
+
+		auto tA = isLinearA ? intersectionLineT : intersectionCurveT;
+		auto tB = isLinearA ? intersectionCurveT : intersectionLineT;
+
+		// The line segments intersect at an end point of both segments. For the purposes of this
+		// algorithm it is discarded
+		if ((tA == startA || tA == endA) && (tB == startB || tB == endB)) {
+			return 0;
+		}
+
+		functor(tA, tB, intersection);
+
+		return 1;
+	}
+	else {
+		int resultIdx = 0;
+		auto lastResult = std::numeric_limits<real_t>::quiet_NaN();
+
+		// to get correct P0, P1, P2 for intersection testing
+		auto thisBezier = bezierA.split_from_min_to_max(startA, endA);
+
+		auto p0 = thisBezier.P0;
+		auto p1 = thisBezier.P1;
+		auto p2 = thisBezier.P2;
+		bool sideP1 = cross(p2 - p0, p1 - p0) >= 0.0;
+		
+		auto intersections = Hatch::bezier_bezier_intersections(bezierB, thisBezier);
+
+		for (auto t : intersections) {
+			if (std::isnan(t) || startB >= t || t >= endB) {
+				continue;
+			}
+
+			auto intersection = bezierB.evaluate(t);
+			
+			// Optimization instead of doing SDF to find other T and check against bounds:
+			// If both P1 and the intersection point are on the same side of the P0 -> P2 line of thisBezier,
+			// it's a a valid intersection
+			bool sideIntersection = cross(p2 - p0, intersection - p0) >= 0.0;
+			if (sideP1 != sideIntersection) {
+				continue;
+			}
+
+			bool duplicateT = t == lastResult;
+			if (!duplicateT) {
+				if (resultIdx < 2) {
+					auto s = Hatch::intersect_ortho(bezierA, intersection[major], major);
+
+					if (std::isnan(s) || s < startA || s > endA) {
+						continue;
+					}
+
+					//printf("%g(%g) <= %g <= %g(%g) | %g\n", bezierA.P0[major], thisBezier.P0[major],
+							//intersection[major], bezierA.P2[major], thisBezier.P2[major], s);
+
+					functor(s, t, intersection);
+					lastResult = t;
+					++resultIdx;
+				}
+				else {
+					assert(false && "more intersections than expected");
+				}
+			}
+		}
+
+		return resultIdx;
+	}
+
+	return 0;
+}
+
 static void possible_intersection(SweepEvent& a, SweepEvent& b, EventQueue& queue,
 		std::vector<std::unique_ptr<SweepEvent>>& eventOwner) {
 	static constexpr const int major = static_cast<int>(Hatch::SELECTED_MAJOR_AXIS);
-
-	Hatch::Segment segA{.originalBezier = &a.bezier, .tStart = a.t, .tEnd = a.otherEvent->t};
-	Hatch::Segment segB{.originalBezier = &b.bezier, .tStart = b.t, .tEnd = b.otherEvent->t};
-
-	auto intersections = segA.intersect(segB);
 
 	auto* lastLeftA = &a;
 	auto* lastRightA = a.otherEvent;
 	auto* lastLeftB = &b;
 	auto* lastRightB = b.otherEvent;
+
+	handle_intersections(a.bezier, a.t, a.otherEvent->t, b.bezier, b.t, b.otherEvent->t,
+			[&](real_t tA, real_t tB, const glm::vec<2, real_t>& point) {
+		bool isEndOfA = tA == lastLeftA->t || tA == lastRightA->t;
+		bool isEndOfB = tB == lastLeftB->t || tB == lastRightB->t;
+
+		if (isEndOfA && !isEndOfB) {
+			divide_segment(queue, eventOwner, b.bezier, tB, point, lastLeftB, lastRightB);
+		}
+		else if (isEndOfB && !isEndOfA) {
+			divide_segment(queue, eventOwner, a.bezier, tA, point, lastLeftA, lastRightA);
+		}
+		else if (!isEndOfA && !isEndOfB) {
+			divide_segment(queue, eventOwner, a.bezier, tA, point, lastLeftA, lastRightA);
+			divide_segment(queue, eventOwner, b.bezier, tB, point, lastLeftB, lastRightB);
+		}
+	});
+
+	/*Hatch::Segment segA{.originalBezier = &a.bezier, .tStart = a.t, .tEnd = a.otherEvent->t};
+	Hatch::Segment segB{.originalBezier = &b.bezier, .tStart = b.t, .tEnd = b.otherEvent->t};
+
+	auto intersections = segA.intersect(segB);
 
 	for (auto tB : intersections) {
 		if (std::isnan(tB)) {
@@ -281,11 +443,25 @@ static void possible_intersection(SweepEvent& a, SweepEvent& b, EventQueue& queu
 		auto pB = b.bezier.evaluate(tB);
 		// Due to precision, if the curve is right at the end, intersect_ortho may return nan
 		auto tA = Hatch::intersect_ortho(a.bezier, pB[major], major);
-		tA = std::isnan(tA) ? b.otherEvent->t : tA;
+		tA = std::isnan(tA) ? lastRightA->t : tA;
 
-		divide_segment(queue, eventOwner, b.bezier, tB, pB, lastLeftB, lastRightB);
-		divide_segment(queue, eventOwner, a.bezier, tA, pB, lastLeftA, lastRightA);
-	}
+		bool isEndOfA = tA == lastLeftA->t || tA == lastRightA->t;
+		bool isEndOfB = tB <= lastLeftB->t || tB == lastRightB->t;
+
+		if (isEndOfA && isEndOfB) {
+			continue;
+		}
+		else if (isEndOfA) {
+			divide_segment(queue, eventOwner, b.bezier, tB, pB, lastLeftB, lastRightB);
+		}
+		else if (isEndOfB) {
+			divide_segment(queue, eventOwner, a.bezier, tA, pB, lastLeftA, lastRightA);
+		}
+		else {
+			divide_segment(queue, eventOwner, b.bezier, tB, pB, lastLeftB, lastRightB);
+			divide_segment(queue, eventOwner, a.bezier, tA, pB, lastLeftA, lastRightA);
+		}
+	}*/
 }
 
 static void divide_segment(EventQueue& queue, std::vector<std::unique_ptr<SweepEvent>>& eventOwner,
@@ -568,7 +744,8 @@ size_t BezierMartinez::next_pos(size_t pos, const std::vector<SweepEvent*>& resu
 	return newPos;
 }
 
-static float signed_area(const glm::vec2& p0, const glm::vec2& p1, const glm::vec2& p2) {
+static real_t signed_area(const glm::vec<2, real_t>& p0, const glm::vec<2, real_t>& p1,
+		const glm::vec<2, real_t>& p2) {
 	if constexpr (Hatch::SELECTED_MAJOR_AXIS == Hatch::MajorAxis::MAJOR_X) {
 		return Martinez::signed_area(p0, p1, p2);
 	}
@@ -590,20 +767,21 @@ static void deep_copy_shape(CPUQuadraticShape& dst, const CPUQuadraticShape& src
 	dst.strokeWidth = src.strokeWidth;
 }
 
-bool SweepEvent::is_below(const glm::vec2& p) const {
+bool SweepEvent::is_below(const glm::vec<2, real_t>& p) const {
 	return left
 			? (signed_area(point, otherEvent->point, p) > 0)
 			: (signed_area(otherEvent->point, point, p) > 0);
 }
 
-bool SweepEvent::is_above(const glm::vec2& p) const {
+bool SweepEvent::is_above(const glm::vec<2, real_t>& p) const {
 	return !is_below(p);
 }
 
 bool SweepEvent::is_vertical() const {
 	static constexpr const int major = static_cast<int>(Hatch::SELECTED_MAJOR_AXIS);
 	// NOTE: Candidate for epsilonEqual
-	return point[major] == otherEvent->point[major];
+	//return point[major] == otherEvent->point[major];
+	return std::abs(point[major] - otherEvent->point[major]) < Martinez::LINEAR_EPSILON;
 }
 
 bool SweepEvent::is_in_result() const {
@@ -615,19 +793,23 @@ std::strong_ordering CompareEvents::operator()(const SweepEvent* a, const SweepE
 	static constexpr const int minor = 1 - major; 
 
 	// Different major coordinate
-	if (a->point[major] > b->point[major]) {
-		return std::strong_ordering::greater;
-	}
-	else if (a->point[major] < b->point[major]) {
-		return std::strong_ordering::less;
+	if (std::abs(a->point[major] - b->point[major]) > Martinez::LINEAR_EPSILON) {
+		if (a->point[major] > b->point[major]) {
+			return std::strong_ordering::greater;
+		}
+		else if (a->point[major] < b->point[major]) {
+			return std::strong_ordering::less;
+		}
 	}
 
 	// Different points, but same major coordinate
-	if (a->point[minor] > b->point[minor]) {
-		return std::strong_ordering::greater;
-	}
-	else if (a->point[minor] < b->point[minor]) {
-		return std::strong_ordering::less;
+	if (std::abs(a->point[minor] - b->point[minor]) > Martinez::LINEAR_EPSILON) {
+		if (a->point[minor] > b->point[minor]) {
+			return std::strong_ordering::greater;
+		}
+		else if (a->point[minor] < b->point[minor]) {
+			return std::strong_ordering::less;
+		}
 	}
 
 	// Special cases:
@@ -638,7 +820,8 @@ std::strong_ordering CompareEvents::operator()(const SweepEvent* a, const SweepE
 	}
 
 	// Same coordinates, both events are left endpoints or right endpoints, but not collinear
-	if (signed_area(a->point, a->otherEvent->point, b->otherEvent->point) != 0) {
+	//if (signed_area(a->point, a->otherEvent->point, b->otherEvent->point) != 0) {
+	if (!Martinez::points_are_collinear(a->point, a->otherEvent->point, b->otherEvent->point)) {
 		// The event associated with the bottom segment is processed first
 		return a->is_below(b->otherEvent->point) ? std::strong_ordering::less : std::strong_ordering::greater;
 	}
@@ -654,24 +837,28 @@ std::strong_ordering CompareSegments::operator()(const SweepEvent* a, const Swee
 	static constexpr const int major = static_cast<int>(Hatch::SELECTED_MAJOR_AXIS);
 	static constexpr const int minor = 1 - major; 
 
+	Hatch::Segment segA{&a->bezier, a->t, a->otherEvent->t};
+	Hatch::Segment segB{&b->bezier, b->t, b->otherEvent->t};
+	return Hatch::SegmentLess{}(segA, segB) ? std::strong_ordering::less : std::strong_ordering::greater;
+
 	if (a == b) {
 		return std::strong_ordering::equal;
 	}
 
 	// Segments are not collinear
-	if (signed_area(a->point, a->otherEvent->point, b->point) != 0
-			|| signed_area(a->point, a->otherEvent->point, b->otherEvent->point) != 0) {
+	if (!Martinez::points_are_collinear(a->point, a->otherEvent->point, b->point)
+			|| !Martinez::points_are_collinear(a->point, a->otherEvent->point, b->otherEvent->point)) {
 		// If they share their left endpoint use the right endpoint to sort
 		// NOTE: Candidate for epsilonEqual
-		if (a->point == b->point) {
-		//if (point_equals(a->point, b->point)) {
+		//if (a->point == b->point) {
+		if (point_equals(a->point, b->point)) {
 			return a->is_below(b->otherEvent->point) ? std::strong_ordering::less
 					: std::strong_ordering::greater;
 		}
 
 		// Different left endpoint: use the left endpoint to sort
-		if (a->point[major] == b->point[major]) {
-		//if (std::abs(a->point[major] - b->point[major]) < 1e-4) {
+		//if (a->point[major] == b->point[major]) {
+		if (std::abs(a->point[major] - b->point[major]) < Martinez::LINEAR_EPSILON) {
 			return a->point[minor] < b->point[minor] ? std::strong_ordering::less
 					: std::strong_ordering::greater;
 			}

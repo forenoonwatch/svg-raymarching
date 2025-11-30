@@ -39,6 +39,8 @@ std::array<real_t, 4> bezier_bezier_intersections(const QuadraticBezier<real_t>&
 		const QuadraticBezier<real_t>& other);
 real_t intersect_ortho(const QuadraticBezier<real_t>& bezier, real_t lineConstant, int major);
 
+bool is_line_segment(const QuadraticBezier<real_t>& bezier);
+
 struct SegmentLess {
 	int major = static_cast<int>(SELECTED_MAJOR_AXIS);
 	int minor = 1 - static_cast<int>(SELECTED_MAJOR_AXIS);
