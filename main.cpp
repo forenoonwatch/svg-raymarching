@@ -335,6 +335,30 @@ struct Iteration {
 	Pair<float_t, float_t> fRange;
 	Pair<float_t, float_t> gRange;
 	std::unique_ptr<Iteration<float_t>> last;
+
+	Iteration(const QuadraticBezier<float_t>* inF, const QuadraticBezier<float_t>* inG,
+			Pair<float_t, float_t> inFRange, Pair<float_t, float_t> inGRange)
+		: F(inF)
+		, G(inG)
+		, fRange(inFRange)
+		, gRange(inGRange) {}
+
+	Iteration() = default;
+	Iteration(Iteration&&) noexcept = default;
+	Iteration& operator=(Iteration&&) noexcept = default;
+
+	Iteration(const Iteration& other) noexcept {
+		*this = other;
+	}
+
+	Iteration& operator=(const Iteration& other) noexcept {
+		F = other.F;
+		G = other.G;
+		fRange = other.fRange;
+		gRange = other.gRange;
+		last = other.last ? std::make_unique<Iteration<float_t>>(*other.last) : nullptr;
+		return *this;
+	}
 };
 
 }
@@ -382,13 +406,13 @@ static std::array<float_t, 2> intersect_bez_line(const QuadraticBezier<float_t>&
 			std::numeric_limits<float_t>::quiet_NaN()};
 	int resultCount = 0;
 
-	if (roots.x >= float_t(0.0) && roots.x <= float_t(1.0)) {
+	//if (roots.x >= float_t(0.0) && roots.x <= float_t(1.0)) {
 		result[resultCount++] = roots.x;
-	}
+	//}
 
-	if (roots.y >= float_t(0.0) && roots.y <= float_t(1.0)) {
+	//if (roots.y >= float_t(0.0) && roots.y <= float_t(1.0)) {
 		result[resultCount++] = roots.y;
-	}
+	//}
 
 	return result;
 }
@@ -427,18 +451,11 @@ static void bez_bez_fast(const QuadraticBezier<float_t>& bezierA, const Quadrati
 	const float_t tMinimumAccuracy = std::pow(2.0, -33);
 	const float_t finalTMinimumAccuracy = std::pow(2.0, -43);
 
-	Iteration<float_t> iteration{
-		.F = &bezierA,
-		.G = &bezierB,
-		.fRange = {0, 1},
-		.gRange = {0, 1},
-	};
-
 	int iterations = 0;
 	int maxIterations = 60;
 
 	std::vector<Iteration<float_t>> stack;
-	stack.emplace_back(std::move(iteration));
+	stack.emplace_back(&bezierA, &bezierB, Pair<float_t, float_t>{0, 1}, Pair<float_t, float_t>{0, 1});
 
 	std::vector<Pair<Pair<float_t, float_t>, Pair<float_t, float_t>>> xs;
 
@@ -496,6 +513,195 @@ static void bez_bez_fast(const QuadraticBezier<float_t>& bezierA, const Quadrati
 	std::sort(xs.begin(), xs.end(), [](const auto& a, const auto& b) {
 		return a.first.first < b.first.first; 
 	});
+}
+
+template <typename float_t>
+static int clip_curve_by_fat_line(const QuadraticBezier<float_t>& bezier, const glm::vec<2, float_t>& L0,
+		const glm::vec<2, float_t>& L1, float_t lineOffset, const Pair<float_t, float_t>& gRange,
+		std::array<Pair<float_t, float_t>, 2>& results) {
+	auto resLow = intersect_bez_line(bezier, L0, L1, float_t(0.0));
+	auto resHigh = intersect_bez_line(bezier, L0, L1, -lineOffset);
+
+	bool hasRootsLo = !(std::isnan(resLow[0]) && std::isnan(resLow[1]));
+	bool hasRootsHi = !(std::isnan(resHigh[0]) && std::isnan(resHigh[1]));
+
+	if (!hasRootsLo && !hasRootsHi) {
+		// If neither the high or low bound of the fat line intersect the other curve,
+		// then they cannot intersect
+		return 0;
+	}
+
+	if (hasRootsLo && !hasRootsHi) {
+		// 1 solution means the line F.P0->F.P2 tangentially touches G. This either means no intersection,
+		// an exact intersection of F.P0/F.P2 with G, or F is a line segment and touches G
+		if (std::isnan(resLow[1]) || resLow[0] == resLow[1]) {
+			// Intersection is outside of the range of G, so no intersections
+			if (resLow[0] < gRange.first || resLow[0] > gRange.second) {
+				return 0;
+			}
+
+			// FIXME: Check if G(resLow[0]) lies on F.
+		}
+
+		auto tMin = std::min(gRange.second, std::max(gRange.first, resLow[0]));
+		auto tMax = std::min(gRange.second, std::max(gRange.first, resLow[1]));
+
+		// Return clipped result with swapped parameters.
+		results[0] = {tMin, tMax};
+		return 1;
+	}
+	else if (hasRootsHi && !hasRootsLo) {
+		// 1 solution means that the line F.P0->F.P2 + offset tangentially touches G. This can only mean no
+		// intersection, since if F was a line, it would have found low roots.
+		if (std::isnan(resHigh[1]) || resHigh[0] == resHigh[1]) {
+			return 0;
+		}
+
+		auto tMin = std::min(gRange.second, std::max(gRange.first, resHigh[0]));
+		auto tMax = std::min(gRange.second, std::max(gRange.first, resHigh[1]));
+
+		// Return clipped result with swapped parameters.
+		results[0] = {tMin, tMax};
+		return 1;
+	}
+	else {
+		auto tMin0 = std::min(gRange.second, std::max(gRange.first, resLow[0]));
+		auto tMax0 = std::min(gRange.second, std::max(gRange.first, resHigh[0]));
+
+		auto tMin1 = std::min(gRange.second, std::max(gRange.first, resLow[1]));
+		auto tMax1 = std::min(gRange.second, std::max(gRange.first, resHigh[1]));
+
+		// May have overlaps so just use the union of the two curves
+		if (tMin0 >= tMin1 || tMax0 >= tMax1) {
+			results[0] = {std::min(tMin0, tMin1), std::max(tMax0, tMax1)};
+			return 1;
+		}
+
+		int resultCount = 0;
+
+		if (tMin0 != tMax0) {
+			results[resultCount++] = {tMin0, tMax0};
+		}
+
+		if (tMin1 != tMax1) {
+			results[resultCount++] = {tMin1, tMax1};
+		}
+
+		return resultCount;
+	}
+}
+
+template <typename float_t>
+static int check_intersection_in_ranges2(const Iteration<float_t>& iter,
+	std::array<Iteration<float_t>, 2>& newIters) {
+	static constexpr const float_t maxClipTSpan = float_t(0.7);
+
+	auto subF = iter.F->split_from_min_to_max(iter.fRange.first, iter.fRange.second);
+	auto lineOffset = distance_to_line(subF.P0, subF.P2, subF.P1);
+	std::array<Pair<float_t, float_t>, 2> intersections;
+	int intersectionCount = clip_curve_by_fat_line(*iter.G, subF.P0, subF.P2, lineOffset, iter.gRange,
+			intersections);
+
+	if (intersectionCount == 0) {
+		return 0;
+	}
+	else if (intersectionCount == 2) {
+		newIters[0] = {iter.G, iter.F, intersections[0], iter.fRange};
+		newIters[1] = {iter.G, iter.F, intersections[1], iter.fRange};
+		return 2;
+	}
+
+	auto [tMin, tMax] = intersections[0];
+	auto tScale = float_t(1.0);// / (iter.gRange.second - iter.gRange.first);
+
+	// If the range is too large and a solution hasn't been found yet, try a perpendicular line.
+	// This is important for efficiency especially in cases where Bezier curves meet (or almost meet)
+	// with nearly the same tangent and curvature.
+	if (!iter.last && (tMax - tMin) * tScale > maxClipTSpan) {
+		auto perp = subF.P0 + glm::vec<2, float_t>(subF.P0.y - subF.P2.y, subF.P2.x - subF.P0.x);
+		// FIXME: Compare and swap by the absolute value of these 2
+		lineOffset = std::max(distance_to_line(subF.P0, perp, subF.P1),
+				distance_to_line(subF.P0, perp, subF.P2));
+		intersectionCount = clip_curve_by_fat_line(*iter.G, subF.P0, perp, lineOffset, iter.gRange,
+				intersections);
+
+		if (intersectionCount == 0) {
+			return 0;
+		}
+		else if (intersectionCount == 2) {
+			newIters[0] = {iter.G, iter.F, intersections[0], iter.fRange};
+			newIters[1] = {iter.G, iter.F, intersections[1], iter.fRange};
+			return 2;
+		}
+
+		tMin = intersections[0].first;
+		tMax = intersections[0].second;
+	}
+
+	// The paper clals for a heuristic that if less than 30% will be clipped, you should just split the
+	// longest curve and find intersections in the two halves separately.
+	// Note that in this case, F and G are not swapped.
+	if (!iter.last && (tMax - tMin) * tScale > maxClipTSpan) {
+		if (tMax - tMin >= iter.fRange.second - iter.fRange.first) {
+			auto tMid = (tMax + tMin) * float_t(0.5);
+
+			// NOTE: To insert into the stack correctly, the [mid, max] interval is placed first.
+			newIters[0] = {iter.F, iter.G, iter.fRange, {tMid, tMax}};
+			newIters[1] = {iter.F, iter.G, iter.fRange, {tMin, tMid}};
+		}
+		else {
+			auto tMid = (iter.fRange.second + iter.fRange.first) * float_t(0.5);
+
+			newIters[0] = {iter.F, iter.G, {tMid, iter.fRange.second}, iter.gRange};
+			newIters[1] = {iter.F, iter.G, {iter.fRange.first, tMid}, iter.gRange};
+		}
+		
+		return 2;
+	}
+
+	newIters[0] = {iter.G, iter.F, {tMin, tMax}, iter.fRange};
+	return 1;
+}
+
+template <typename float_t>
+struct BezBezDebugEntry {
+	std::array<Iteration<float_t>, 2> iters;
+	int count;
+};
+
+template <typename float_t>
+struct BezBezDebug {
+	std::vector<BezBezDebugEntry<float_t>> steps;
+};
+
+template <typename float_t>
+static void bez_bez_fast2(const QuadraticBezier<float_t>& bezierA, const QuadraticBezier<float_t>& bezierB,
+		BezBezDebug<float_t>& debug) {
+	int iterations = 0;
+	int maxIterations = 30;
+
+	std::vector<Iteration<float_t>> stack;
+	stack.emplace_back(&bezierA, &bezierB, Pair<float_t, float_t>{0, 1}, Pair<float_t, float_t>{0, 1});
+
+	while (!stack.empty() && iterations < maxIterations) {
+		++iterations;
+
+		auto iter = std::move(stack.back());
+		stack.pop_back();
+
+		std::array<Iteration<float_t>, 2> newIters;
+		int resultCount = check_intersection_in_ranges2(iter, newIters);
+
+		debug.steps.emplace_back(newIters, resultCount);
+
+		if (resultCount == 1) {
+			stack.emplace_back(std::move(newIters[0]));
+		}
+		else if (resultCount == 2) {
+			stack.emplace_back(std::move(newIters[0]));
+			stack.emplace_back(std::move(newIters[1]));
+		}
+	}
 }
 
 int main() {
@@ -767,25 +973,38 @@ int main() {
 		}
 
 		{
-			//QuadraticBezier<double> bez{controlPoints[0], controlPoints[1], controlPoints[2]};
-			//auto lineConstant = distance_to_line(controlPoints[3], controlPoints[5], controlPoints[4]);
-			//auto res = intersect_bez_line(bez, controlPoints[3], controlPoints[5], -lineConstant);
+			QuadraticBezier<double> bez0{controlPoints[0], controlPoints[1], controlPoints[2]};
+			QuadraticBezier<double> bez1{controlPoints[3], controlPoints[4], controlPoints[5]};
+			BezBezDebug<double> debug;
+			bez_bez_fast2(bez0, bez1, debug);
 
-			QuadraticBezier<double> bez{controlPoints[3], controlPoints[4], controlPoints[5]};
-			auto lineConstant = distance_to_line(controlPoints[0], controlPoints[2], controlPoints[1]);
-			auto res = intersect_bez_line(bez, controlPoints[0], controlPoints[2], -lineConstant);
+			int stepIndex = g_step <= debug.steps.size() - 1 ? g_step : debug.steps.size() - 1;
+			auto& step = debug.steps[stepIndex];
 
-			for (auto t : res) {
-				if (std::isnan(t)) {
-					continue;
+			auto drawCurve = [&](const QuadraticBezier<double>& fullBez, const Pair<double, double>& range) {
+				if (range.second - range.first < 0.0001) {
+					auto p = fullBez.evaluate((range.first + range.second) * 0.5);
+					nvgBeginPath(vg);
+					nvgCircle(vg, p.x, p.y, 4);
+					nvgFillColor(vg, nvgRGBA(0, 255, 255, 255));
+					nvgFill(vg);
 				}
+				else {
+					auto bez = fullBez.split_from_min_to_max(range.first, range.second);
 
-				auto p = bez.evaluate(t);
+					nvgBeginPath(vg);
+					nvgMoveTo(vg, bez.P0.x, bez.P0.y);
+					nvgQuadTo(vg, bez.P1.x, bez.P1.y, bez.P2.x, bez.P2.y);
+					nvgStrokeWidth(vg, 3.f);
+					nvgStrokeColor(vg, nvgRGBA(0, 0, 255, 255));
+					nvgStroke(vg);
+				}
+			};
 
-				nvgBeginPath(vg);
-				nvgCircle(vg, p.x, p.y, 3.f);
-				nvgFillColor(vg, nvgRGBA(255, 255, 0, 255));
-				nvgFill(vg);
+			for (int i = 0; i < step.count; ++i) {
+				auto& iter = step.iters[i];
+				drawCurve(*iter.F, iter.fRange);
+				drawCurve(*iter.G, iter.gRange);
 			}
 		}
 
