@@ -414,8 +414,8 @@ std::array<real_t, 2> Segment::intersect(const Segment& other) const {
 	int resultIdx = 0;
 
 	// Use line intersections if one or both of the beziers are linear (a = 0)
-	bool selfLinear = true;//is_line_segment(*originalBezier);
-	bool otherLinear = true;//is_line_segment(*other.originalBezier);
+	bool selfLinear = is_line_segment(*originalBezier);
+	bool otherLinear = is_line_segment(*other.originalBezier);
 
 	if (selfLinear && otherLinear) {
 		// Line/line intersection

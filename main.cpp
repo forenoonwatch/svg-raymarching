@@ -34,6 +34,9 @@
 #include "hatch_impl.hpp"
 #include "martinez_impl.hpp"
 #include "bezier_martinez_impl.hpp"
+#include "pair.hpp"
+
+#include <glm/mat2x2.hpp>
 
 static constexpr const char* g_lineVertex = R"(
 #version 460
@@ -107,11 +110,11 @@ static void add_polygon_svg(std::vector<CPUQuadraticShape>& svgShapes, const Pol
 	}
 }
 
-static glm::vec2 controlPoints[] = {
-	{50, 50}, {100, 100}, {50, 150},
-	{250, 50}, {300, 100}, {350, 150},
+static glm::vec<2, double> controlPoints[] = {
+	{50, 100}, {300, 150}, {50, 200},
+	{100, 50}, {200, 100}, {150, 350},
 };
-static glm::vec2* selectedPoint = nullptr;
+static glm::vec<2, double>* selectedPoint = nullptr;
 
 static void on_mouse_button_event(GLFWwindow* window, int button, int action, int mods);
 static void on_mouse_move_event(GLFWwindow* window, double xPos, double yPos);
@@ -199,6 +202,9 @@ struct MartinezDebug {
 	}
 };
 
+template <typename float_t>
+static void bez_bez_fast(const QuadraticBezier<float_t>& bezierA, const QuadraticBezier<float_t>& bezierB);
+
 struct BezierMartinezDebug {
 	std::vector<std::unique_ptr<BezierMartinez::SweepEvent>> ownedEvents;
 	BezierMartinez::EventQueue queue;
@@ -239,6 +245,8 @@ struct BezierMartinezDebug {
 						sortedEvents[j]->otherEvent->t};
 
 				auto sects = segA.intersect(segB);
+
+				bez_bez_fast(*segA.originalBezier, *segB.originalBezier);
 
 				for (auto t : sects) {
 					if (std::isnan(t) || t <= segB.tStart || t >= segB.tEnd) {
@@ -315,6 +323,180 @@ struct BezierMartinezDebug {
 		}
 	}
 };
+
+namespace {
+
+template <typename float_t>
+struct Iteration {
+	// The bezier curve to be fat line bounded
+	const QuadraticBezier<float_t>* F;
+	// The bezier curve to be geometric interval bounded
+	const QuadraticBezier<float_t>* G;
+	Pair<float_t, float_t> fRange;
+	Pair<float_t, float_t> gRange;
+	std::unique_ptr<Iteration<float_t>> last;
+};
+
+}
+
+template <typename float_t>
+static float_t distance_to_line(const glm::vec<2, float_t>& L0, const glm::vec<2, float_t>& L1,
+		const glm::vec<2, float_t>& p) {
+	auto cross = [](const auto& a, const auto& b) {
+		return a.x * b.y - a.y * b.x;
+	};
+
+	auto p10 = L1 - L0;
+	//return std::abs(cross(p, p10) + cross(L1, L0)) / glm::length(p10);
+	return (cross(p, p10) + cross(L1, L0)) / glm::length(p10);
+}
+
+template <typename float_t>
+static std::array<float_t, 2> intersect_bez_line(const QuadraticBezier<float_t>& bez,
+		const glm::vec<2, float_t>& L0, const glm::vec<2, float_t>& L1, float_t lineConstant) {
+	auto D = glm::normalize(L1 - L0);
+	glm::mat<2, 2, float_t> rotation{ 
+		{D.x, -D.y}, 
+		{D.y, D.x} 
+	};
+
+	QuadraticBezier<float_t> rotatedCurve{
+		rotation * (bez.P0 - L0),
+		rotation * (bez.P1 - L0),
+		rotation * (bez.P2 - L0)
+	};
+
+	float_t points[] = {rotatedCurve.P0[1], rotatedCurve.P1[1], rotatedCurve.P2[1]};
+
+	for (auto& pt : points) {
+		pt -= lineConstant;
+	}
+
+	auto A = points[0] - float_t(2.0) * points[1] + points[2];
+	auto B = float_t(2.0) * (points[1] - points[0]);
+	auto C = points[0];
+
+	auto roots = EqQuadratic<float_t>{A, B, C}.compute_roots();
+
+	std::array<float_t, 2> result{std::numeric_limits<float_t>::quiet_NaN(),
+			std::numeric_limits<float_t>::quiet_NaN()};
+	int resultCount = 0;
+
+	if (roots.x >= float_t(0.0) && roots.x <= float_t(1.0)) {
+		result[resultCount++] = roots.x;
+	}
+
+	if (roots.y >= float_t(0.0) && roots.y <= float_t(1.0)) {
+		result[resultCount++] = roots.y;
+	}
+
+	return result;
+}
+
+template <typename float_t>
+static int check_intersection_in_ranges(const Iteration<float_t>& iter,
+		std::array<Iteration<float_t>, 2>& newIters) {
+	auto& F = *iter.F;
+	auto& G = *iter.G;
+	auto& fRange = iter.fRange;
+	auto& gRange = iter.gRange;
+
+	auto ftMin = fRange.first;
+	auto ftMax = fRange.second;
+	auto gtMin = gRange.first;
+	auto gtMax = gRange.second;
+
+	//auto F_ = from_to_including_error_bound(F, ftMin, ftMax);
+	//auto G_ = from_to_including_error_bound(G, gtMin, gtMax);
+	auto F_ = F.split_from_min_to_max(ftMin, ftMax);
+	auto G_ = G.split_from_min_to_max(gtMin, gtMax);
+
+	// Q will be fat line bounded. Get start and endpoint of curve
+	auto& FS = F_.P0;
+	auto& FE = F_.P2;
+
+	auto dF0 = distance_to_line(FS, FE, F_.P0);
+	auto dF1 = distance_to_line(FS, FE, F_.P1);
+	auto dF2 = distance_to_line(FS, FE, F_.P2);
+
+	return 0;
+}
+
+template <typename float_t>
+static void bez_bez_fast(const QuadraticBezier<float_t>& bezierA, const QuadraticBezier<float_t>& bezierB) {
+	const float_t tMinimumAccuracy = std::pow(2.0, -33);
+	const float_t finalTMinimumAccuracy = std::pow(2.0, -43);
+
+	Iteration<float_t> iteration{
+		.F = &bezierA,
+		.G = &bezierB,
+		.fRange = {0, 1},
+		.gRange = {0, 1},
+	};
+
+	int iterations = 0;
+	int maxIterations = 60;
+
+	std::vector<Iteration<float_t>> stack;
+	stack.emplace_back(std::move(iteration));
+
+	std::vector<Pair<Pair<float_t, float_t>, Pair<float_t, float_t>>> xs;
+
+	while (!stack.empty() && iterations < maxIterations) {
+		++iterations;
+		auto iter = std::move(stack.back());
+		stack.pop_back();
+
+		std::array<Iteration<float_t>, 2> newIters;
+		int results = check_intersection_in_ranges(iter, newIters);
+
+		if (results == 1) {
+			auto& newIter = newIters[0];
+			auto& fRange = newIter.fRange;
+
+			auto ddelta = std::abs(fRange.second - fRange.first);
+
+			// If the previous iteration was precise enough
+			if (newIter.last) {
+				auto& lfRange = newIter.last->fRange;
+
+				// This case can occur when the geometric interval clips a piece of the other bezier very
+				// far away but is by coincidence of length < tMinimumAccuracy.
+				if (ddelta > tMinimumAccuracy) {
+					// FIXME: Use implicit solver here
+				}
+
+				xs.emplace_back(iter.F == &bezierB ? Pair{fRange, lfRange} : Pair{lfRange, fRange});
+			}
+			// Else if this iteration is precise enough
+			else {
+				if (ddelta < tMinimumAccuracy) {
+					if (ddelta < finalTMinimumAccuracy) {
+						// Destructively change the fRange as a heuristic so it's not too narrow for the final
+						// clip. This might only be a proble mif fRange == 0
+						fRange.first = std::max(0.0, fRange.first - finalTMinimumAccuracy);
+						fRange.second = std::min(1.0, fRange.second + finalTMinimumAccuracy);
+					}
+
+					newIter.last = std::make_unique<Iteration<float_t>>(newIter.F, newIter.G, newIter.fRange,
+							newIter.gRange);
+				}
+
+				// Push the (possibly) final iteration
+				stack.emplace_back(std::move(newIter));
+			}
+		}
+		else if (results == 2) {
+			stack.emplace_back(std::move(newIters[0]));
+			stack.emplace_back(std::move(newIters[1]));
+		}
+	}
+	
+	// Check for possible duplicate intersections at split points
+	std::sort(xs.begin(), xs.end(), [](const auto& a, const auto& b) {
+		return a.first.first < b.first.first; 
+	});
+}
 
 int main() {
 	glfwInit();
@@ -478,6 +660,10 @@ int main() {
 	BezierMartinezDebug bmd;
 	bmd.build(svgShapes[0], svgShapes[1], BooleanOperation::UNION);
 
+	auto cross = [](const auto& a, const auto& b) {
+		return a.x * b.y - a.y * b.x;
+	};
+
 	while (!glfwWindowShouldClose(window)) {
 		auto currTime = glfwGetTime();
 		auto deltaTime = static_cast<float>(currTime - lastTime);
@@ -563,6 +749,46 @@ int main() {
 			nvgStroke(vg);
 		}
 
+		for (size_t i = 0; i < sizeof(controlPoints) / sizeof(controlPoints[0]); i += 3) {
+			nvgBeginPath(vg);
+			nvgMoveTo(vg, controlPoints[i].x, controlPoints[i].y);
+			nvgQuadTo(vg, controlPoints[i + 1].x, controlPoints[i + 1].y, controlPoints[i + 2].x,
+					controlPoints[i + 2].y);
+			nvgStrokeWidth(vg, 2.f);
+			nvgStrokeColor(vg, nvgRGBA(255, 255, 255, 255));
+			nvgStroke(vg);
+		}
+
+		for (size_t i = 0; i < sizeof(controlPoints) / sizeof(controlPoints[0]); ++i) {
+			nvgBeginPath(vg);
+			nvgCircle(vg, controlPoints[i].x, controlPoints[i].y, 3.f);
+			nvgFillColor(vg, nvgRGBA(255, 0, 0, 255));
+			nvgFill(vg);
+		}
+
+		{
+			//QuadraticBezier<double> bez{controlPoints[0], controlPoints[1], controlPoints[2]};
+			//auto lineConstant = distance_to_line(controlPoints[3], controlPoints[5], controlPoints[4]);
+			//auto res = intersect_bez_line(bez, controlPoints[3], controlPoints[5], -lineConstant);
+
+			QuadraticBezier<double> bez{controlPoints[3], controlPoints[4], controlPoints[5]};
+			auto lineConstant = distance_to_line(controlPoints[0], controlPoints[2], controlPoints[1]);
+			auto res = intersect_bez_line(bez, controlPoints[0], controlPoints[2], -lineConstant);
+
+			for (auto t : res) {
+				if (std::isnan(t)) {
+					continue;
+				}
+
+				auto p = bez.evaluate(t);
+
+				nvgBeginPath(vg);
+				nvgCircle(vg, p.x, p.y, 3.f);
+				nvgFillColor(vg, nvgRGBA(255, 255, 0, 255));
+				nvgFill(vg);
+			}
+		}
+
 		nvgEndFrame(vg);
 
 		glfwSwapBuffers(window);
@@ -586,7 +812,7 @@ static void on_mouse_button_event(GLFWwindow* window, int button, int action, in
 		glfwGetCursorPos(window, &mouseX, &mouseY);
 
 		for (auto& controlPoint : controlPoints) {
-			if (glm::distance(controlPoint, glm::vec2{mouseX, mouseY}) < 3.f) {
+			if (glm::distance(controlPoint, glm::vec<2, double>{mouseX, mouseY}) < 3.f) {
 				selectedPoint = &controlPoint;
 				break;
 			}
