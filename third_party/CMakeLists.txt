@@ -7,6 +7,8 @@ set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(Catch2)
 add_subdirectory(glfw)
 add_subdirectory(glm)
+add_subdirectory(config)
+add_subdirectory(multiprecision)
 add_subdirectory(simdjson)
 
 # glad

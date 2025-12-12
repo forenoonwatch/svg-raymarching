@@ -22,3 +22,9 @@
 [submodule "third_party/martinez"]
 	path = third_party/martinez
 	url = https://github.com/w8r/martinez
+[submodule "third_party/multiprecision"]
+	path = third_party/multiprecision
+	url = https://github.com/boostorg/multiprecision
+[submodule "third_party/config"]
+	path = third_party/config
+	url = https://github.com/boostorg/config

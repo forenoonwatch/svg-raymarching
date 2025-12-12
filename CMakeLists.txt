@@ -15,7 +15,7 @@ set_target_properties(raymarch PROPERTIES
 	CXX_STANDARD_REQUIRED ON
 	CXX_EXTENSIONS OFF
 )
-target_link_libraries(raymarch PRIVATE glfw glad glm::glm nanovg nanosvg)
+target_link_libraries(raymarch PRIVATE glfw glad glm::glm nanovg nanosvg Boost::multiprecision Boost::config)
 
 target_sources(raymarch PRIVATE
 	"${CMAKE_CURRENT_SOURCE_DIR}/bezier_martinez.cpp"
