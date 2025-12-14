@@ -2,14 +2,14 @@
 
 #include <cmath>
 
-#include <bit>
-#include <numbers>
 #include <limits>
 
 #include <glm/vec2.hpp>
 #include <glm/geometric.hpp>
 
 #include "gauss_legendre.hpp"
+
+#include <boost/math/constants/constants.hpp>
 
 template <typename float_t>
 struct EqQuadratic {
@@ -22,23 +22,25 @@ struct EqQuadratic {
 	}
 
 	glm::vec<2, float_t> compute_roots() const {
-		glm::vec<2, float_t> res;
+		using std::sqrt;
 
 		auto det = b * b - static_cast<float_t>(4.0) * a * c;
-		auto detSqrt = std::sqrt(det);
+		auto detSqrt = sqrt(det);
 		auto rcp = static_cast<float_t>(0.5) / a;
 		auto bOver2A = b * rcp;
 
 		if (b >= 0) {
-			res[0] = -detSqrt * rcp - bOver2A;
-			res[1] = 2 * c / (-b - detSqrt);
+			return {
+				-detSqrt * rcp - bOver2A,
+				2 * c / (-b - detSqrt),
+			};
 		}
 		else {
-			res[0] = 2 * c / (-b + detSqrt);
-			res[1] = +detSqrt * rcp - bOver2A;
+			return {
+				2 * c / (-b + detSqrt),
+				+detSqrt * rcp - bOver2A,
+			};
 		}
-
-		return res;
 	}
 };
 
@@ -51,7 +53,7 @@ struct EqCubic {
 
 	glm::vec<3, float_t> compute_roots() const {
 		using vec3 = glm::vec<3, float_t>;
-		static constexpr const float_t NaN = std::bit_cast<float_t>(std::numeric_limits<float_t>::quiet_NaN());
+		const float_t NaN = std::numeric_limits<float_t>::quiet_NaN();
 
 		vec3 s(NaN, NaN, NaN);
 
@@ -78,25 +80,25 @@ struct EqCubic {
 			}
 			// one single and one double solution
 			else {
-				auto u = std::cbrt(-q);
+				auto u = cbrt(-q);
 				s[rootCount++] = 2 * u;
 				s[rootCount++] = -u;
 			}
 		}
 		// Three real solutions
 		else if (D < float_t(0.0)) {
-			auto phi = float_t(1.0) / 3 * std::acos(-q / sqrt(-cbp));
-			auto t = 2 * std::sqrt(-p);
+			auto phi = float_t(1.0) / 3 * acos(-q / sqrt(-cbp));
+			auto t = 2 * sqrt(-p);
 
-			s[rootCount++] = t * std::cos(phi);
-			s[rootCount++] = -t * std::cos(phi + std::numbers::pi_v<float_t> / 3);
-			s[rootCount++] = -t * std::cos(phi - std::numbers::pi_v<float_t> / 3);
+			s[rootCount++] = t * cos(phi);
+			s[rootCount++] = -t * cos(phi + boost::math::constants::pi<float_t>() / 3);
+			s[rootCount++] = -t * cos(phi - boost::math::constants::pi<float_t>() / 3);
 		}
 		// One real solution
 		else {
-			auto sqrtD = std::sqrt(D);
-			auto u = std::cbrt(sqrtD - q);
-			auto v = -std::cbrt(sqrtD + q);
+			auto sqrtD = sqrt(D);
+			auto u = cbrt(sqrtD - q);
+			auto v = -cbrt(sqrtD + q);
 
 			s[rootCount++] = u + v;
 		}
@@ -108,7 +110,7 @@ struct EqCubic {
 			s[i] -= sub;
 		}
 
-		return s;
+		return {s.x, s.y, s.z};
 	}
 };
 
@@ -123,7 +125,7 @@ struct EqQuartic {
 
 	// Originally from: https://github.com/erich666/GraphicsGems/blob/master/gems/Roots3And4.c
 	glm::vec<4, float_t> compute_roots() const {
-		static constexpr const float_t NaN = std::bit_cast<float_t>(std::numeric_limits<float_t>::quiet_NaN());
+		const float_t NaN = std::numeric_limits<float_t>::quiet_NaN();
 
 		float_t  coeffs[4];
 		glm::vec<4, float_t> s{NaN, NaN, NaN, NaN};
@@ -137,9 +139,10 @@ struct EqQuartic {
 
 		/*  substitute x = y - A/4 to eliminate cubic term: x^4 + px^2 + qx + r = 0 */
 		auto sq_A = A * A;
-		auto p = -3.0 / 8 * sq_A + B;
-		auto q = 1.0 / 8 * sq_A * A - 1.0 / 2 * A * B + C;
-		auto r = -3.0 / 256 * sq_A * sq_A + 1.0 / 16 * sq_A * B - 1.0 / 4 * A * C + D;
+		auto p = -float_t(3.0) / 8 * sq_A + B;
+		auto q = float_t(1.0) / 8 * sq_A * A - float_t(1.0) / 2 * A * B + C;
+		auto r = -float_t(3.0) / 256 * sq_A * sq_A + float_t(1.0) / 16 * sq_A * B
+				- float_t(1.0) / 4 * A * C + D;
 
 		if (r == 0.0) {
 			/* no absolute term: y(y^3 + py + q) = 0 */
@@ -150,13 +153,13 @@ struct EqQuartic {
 		}
 		else {
 			/* solve the resolvent cubic ... */
-			auto cubic = EqCubic<float_t>{1, -1.0 / 2 * p, -r,
-					1.0 / 2 * r * p - 1.0 / 8 * q * q}.compute_roots();
+			auto cubic = EqCubic<float_t>{1, -float_t(1.0) / 2 * p, -r,
+					float_t(1.0) / 2 * r * p - float_t(1.0) / 8 * q * q}.compute_roots();
 			float_t z;
 
 			/* ... and take the one real solution ... */
 			for (uint32_t i = 0; i < 3; i ++) {
-				if (!std::isnan(cubic[i])) {
+				if (!isnan(cubic[i])) {
 					z = cubic[i];
 					break;
 				}
@@ -170,46 +173,46 @@ struct EqQuartic {
 				u = 0;
 			}
 			else if (u > 0) {
-				u = std::sqrt(u);
+				u = sqrt(u);
 			}
 			else {
-				return s; // (empty)
+				return {s.x, s.y, s.z, s.w};
 			}
 
 			if (v == 0.0) {
 				v = 0;
 			}
 			else if (v > 0) {
-				v = std::sqrt(v);
+				v = sqrt(v);
 			}
 			else {
-				return s; // (empty)
+				return {s.x, s.y, s.z, s.w};
 			}
 
 			auto quadric1 = EqQuadratic<float_t>{1, q < 0 ? -v : v, z - u}.compute_roots();
 			auto quadric2 = EqQuadratic<float_t>{1, q < 0 ? v : -v, z + u}.compute_roots();
 
 			for (uint32_t i = 0; i < 2; ++i) {
-				if (!std::isinf(quadric1[i]) && !std::isnan(quadric1[i])) {
+				if (!isinf(quadric1[i]) && !isnan(quadric1[i])) {
 					s[rootCount++] = quadric1[i];
 				}
 			}
 
 			for (uint32_t i = 0; i < 2; ++i) {
-				if (!std::isinf(quadric2[i]) && !std::isnan(quadric2[i])) {
+				if (!isinf(quadric2[i]) && !isnan(quadric2[i])) {
 					s[rootCount++] = quadric2[i];
 				}
 			}
 		}
 
 		/* resubstitute */
-		auto sub = 1.0 / 4 * A;
+		auto sub = float_t(1.0) / 4 * A;
 
 		for (uint32_t i = 0; i < rootCount; ++i) {
 			s[i] -= sub;
 		}
 
-		return s;
+		return {s.x, s.y, s.z, s.w};
 	}
 };
 
@@ -281,8 +284,8 @@ struct QuadraticCurve {
 
 	static QuadraticCurve from_bezier(const vec2& P0, const vec2& P1, const vec2& P2) {
 		return {
-			.A = P0 - float_t(2.0) * P1 + P2,
-			.B = float_t(2.0) * (P1 - P0),
+			.A = P0 - vec2(float_t(2.0), float_t(2.0)) * P1 + P2,
+			.B = vec2(float_t(2.0), float_t(2.0)) * (P1 - P0),
 			.C = P0,
 		};
 	}

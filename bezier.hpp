@@ -116,7 +116,7 @@ struct QuadraticBezier {
 	}
 };
 
-template <typename float_t>
+template <typename float_t, typename internal_t = double>
 EqQuartic<float_t> get_bezier_bezier_intersection_equation(const QuadraticBezier<float_t>& lhs,
 		const QuadraticBezier<float_t>& rhs) {
 	// Algorithm based on Computer Aided Geometric Design: 
@@ -136,12 +136,12 @@ EqQuartic<float_t> get_bezier_bezier_intersection_equation(const QuadraticBezier
     // https://www.desmos.com/calculator/mjwqvnvyb8?lang=pt-BR
 
     // for convenience
-    auto p0x = rhs.P0.x;
-    auto p1x = rhs.P1.x;
-    auto p2x = rhs.P2.x;
-    auto p0y = rhs.P0.y;
-    auto p1y = rhs.P1.y;
-    auto p2y = rhs.P2.y;
+    auto p0x = static_cast<internal_t>(rhs.P0.x);
+    auto p1x = static_cast<internal_t>(rhs.P1.x);
+    auto p2x = static_cast<internal_t>(rhs.P2.x);
+    auto p0y = static_cast<internal_t>(rhs.P0.y);
+    auto p1y = static_cast<internal_t>(rhs.P1.y);
+    auto p2y = static_cast<internal_t>(rhs.P2.y);
 
     // Implicitize other curve
     auto k0 = (4 * p0y * p1y) - (4 * p0y * p2y) - (4 * (p1y * p1y)) + (4 * p1y * p2y) - ((p0y * p0y))
@@ -161,24 +161,28 @@ EqQuartic<float_t> get_bezier_bezier_intersection_equation(const QuadraticBezier
 			- ((p0x * p0x) * (p2y * p2y)) + (2 * p0x * p2x * p0y * p2y) - ((p2x * p2x) * (p0y * p0y))
 			- (4 * p0x * p2x * (p1y * p1y));
         
-    auto quadratic = QuadraticCurve<float_t>::from_bezier(lhs.P0, lhs.P1, lhs.P2);
+    //auto quadratic = QuadraticCurve<float_t>::from_bezier(lhs.P0, lhs.P1, lhs.P2);
     // for convenience
-	glm::vec<2, double> A = quadratic.A;
-	glm::vec<2, double> B = quadratic.B;
-	glm::vec<2, double> C = quadratic.C;
+	//glm::vec<2, internal_t> A{static_cast<internal_t>(quadratic.A.x), static_cast<internal_t>(quadratic.A.y)};
+	//glm::vec<2, internal_t> B{static_cast<internal_t>(quadratic.B.x), static_cast<internal_t>(quadratic.B.y)};
+	//glm::vec<2, internal_t> C{static_cast<internal_t>(quadratic.C.x), static_cast<internal_t>(quadratic.C.y)};
+
+	auto A = lhs.P0 - glm::vec<2, internal_t>(float_t(2.0), float_t(2.0)) * lhs.P1 + lhs.P2;
+	auto B = glm::vec<2, float_t>(float_t(2.0), float_t(2.0)) * (lhs.P1 - lhs.P0);
+	const auto& C = lhs.P0; // fuck boost
 
     // substitute parametric into implicit equation:
         
     // Getting the quartic params
-    double a = ((A.x * A.x) * k0) + (A.x * A.y * k1) + (A.y * A.y * k2);
-    double b = (A.x * B.x * k0 * float_t(2.0)) + (A.x * B.y * k1) + (B.x * A.y * k1)
-			+ (A.y * B.y * k2 * float_t(2.0));
-    double c = (A.x * C.x * k0 * float_t(2.0)) + (A.x * C.y * k1) + (A.x * k3) + ((B.x * B.x) * k0)
-			+ (B.x * B.y * k1) + (C.x * A.y * k1) + (A.y * C.y * k2 * float_t(2.0)) + (A.y * k4)
+    internal_t a = ((A.x * A.x) * k0) + (A.x * A.y * k1) + (A.y * A.y * k2);
+    internal_t b = (A.x * B.x * k0 * internal_t(2.0)) + (A.x * B.y * k1) + (B.x * A.y * k1)
+			+ (A.y * B.y * k2 * internal_t(2.0));
+    internal_t c = (A.x * C.x * k0 * internal_t(2.0)) + (A.x * C.y * k1) + (A.x * k3) + ((B.x * B.x) * k0)
+			+ (B.x * B.y * k1) + (C.x * A.y * k1) + (A.y * C.y * k2 * internal_t(2.0)) + (A.y * k4)
 			+ ((B.y * B.y) * k2);
-    double d = (B.x * C.x * k0 * float_t(2.0)) + (B.x * C.y * k1) + (B.x * k3) + (C.x * B.y * k1)
-			+ (B.y * C.y * k2 * float_t(2.0)) + (B.y * k4);
-    double e = ((C.x * C.x) * k0) + (C.x * C.y * k1) + (C.x * k3) + ((C.y * C.y) * k2) + (C.y * k4) + (k5);
+    internal_t d = (B.x * C.x * k0 * internal_t(2.0)) + (B.x * C.y * k1) + (B.x * k3) + (C.x * B.y * k1)
+			+ (B.y * C.y * k2 * internal_t(2.0)) + (B.y * k4);
+    internal_t e = ((C.x * C.x) * k0) + (C.x * C.y * k1) + (C.x * k3) + ((C.y * C.y) * k2) + (C.y * k4) + (k5);
 
     return EqQuartic<float_t>{static_cast<float_t>(a), static_cast<float_t>(b), static_cast<float_t>(c),
 			static_cast<float_t>(d), static_cast<float_t>(e)};

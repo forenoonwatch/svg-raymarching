@@ -14,6 +14,8 @@
 
 #include <glm/mat2x2.hpp>
 
+#include <boost/multiprecision/cpp_bin_float.hpp>
+
 using namespace Hatch;
 
 static Pair<glm::vec<2, real_t>, glm::vec<2, real_t>> calc_bezier_bounding_box_minor(
@@ -277,24 +279,26 @@ bool Hatch::split_into_major_monotonic_segments(const QuadraticBezier<real_t>& b
 }
 
 real_t Hatch::intersect_ortho(const QuadraticBezier<real_t>& bezier, real_t lineConstant, int component) {
+	using internal_t = boost::multiprecision::cpp_bin_float_oct;
+	using boost::multiprecision::sqrt;
 	// https://pomax.github.io/bezierinfo/#intersections
-	real_t points[] = {bezier.P0[component], bezier.P1[component], bezier.P2[component]};
+	internal_t points[] = {bezier.P0[component], bezier.P1[component], bezier.P2[component]};
 
 	for (size_t i = 0; i < 3; ++i) {
 		points[i] -= lineConstant;
 	}
 
-	auto A = points[0] - real_t(2.0) * points[1] + points[2];
-	auto B = real_t(2.0) * (points[1] - points[0]);
+	auto A = points[0] - internal_t(2.0) * points[1] + points[2];
+	auto B = internal_t(2.0) * (points[1] - points[0]);
 	auto C = points[0];
 
-	auto roots = EqQuadratic<real_t>{A, B, C}.compute_roots();
+	auto roots = EqQuadratic<internal_t>{A, B, C}.compute_roots();
 
-	if (roots.x >= real_t(0.0) && roots.x <= real_t(1.0)) {
-		return roots.x;
+	if (roots.x >= internal_t(0.0) && roots.x <= internal_t(1.0)) {
+		return static_cast<real_t>(roots.x);
 	}
-	else if (roots.y >= real_t(0.0) && roots.y <= real_t(1.0)) {
-		return roots.y;
+	else if (roots.y >= internal_t(0.0) && roots.y <= internal_t(1.0)) {
+		return static_cast<real_t>(roots.y);
 	}
 
 	return std::numeric_limits<real_t>::quiet_NaN();
@@ -332,30 +336,43 @@ static Pair<glm::vec<2, real_t>, glm::vec<2, real_t>> calc_bezier_bounding_box_m
 
 std::array<real_t, 4> Hatch::bezier_bezier_intersections(const QuadraticBezier<real_t>& lhs,
 		const QuadraticBezier<real_t>& rhs) {
-	static constexpr real_t QUARTIC_THRESHOLD = real_t(1e-10);
+	using internal_t = boost::multiprecision::cpp_bin_float_oct;
 
-	auto quarticEquation = get_bezier_bezier_intersection_equation<real_t>(lhs, rhs);
+	internal_t QUARTIC_THRESHOLD = internal_t(1e-10);
+
+	auto quarticEquation = get_bezier_bezier_intersection_equation<internal_t, internal_t>(
+			QuadraticBezier<internal_t>(lhs.P0, lhs.P1, lhs.P2),
+			QuadraticBezier<internal_t>(rhs.P0, rhs.P1, rhs.P2));
 
 	// Only two candidates in range, ever
 	std::array<real_t, 4> t{std::numeric_limits<real_t>::quiet_NaN(), std::numeric_limits<real_t>::quiet_NaN(),
 			std::numeric_limits<real_t>::quiet_NaN(), std::numeric_limits<real_t>::quiet_NaN()};
 
-	auto quadCoeffMag = std::max(std::abs(quarticEquation.d), std::abs(quarticEquation.e));
-	auto cubCoeffMag = std::max(std::abs(quarticEquation.c), quadCoeffMag);
-	auto quartCoeffMag = std::max(std::abs(quarticEquation.b), cubCoeffMag);
+	auto quadCoeffMag = std::max(abs(quarticEquation.d), abs(quarticEquation.e));
+	auto cubCoeffMag = std::max(abs(quarticEquation.c), quadCoeffMag);
+	auto quartCoeffMag = std::max(abs(quarticEquation.b), cubCoeffMag);
 
-	if (std::abs(quarticEquation.a) > quartCoeffMag * QUARTIC_THRESHOLD) {
+	if (abs(quarticEquation.a) > quartCoeffMag * QUARTIC_THRESHOLD) {
 		auto res = quarticEquation.compute_roots();
-		std::memcpy(&t[0], &res.x, sizeof(real_t) * 4);
+		//std::memcpy(&t[0], &res.x, sizeof(real_t) * 4);
+		t[0] = static_cast<real_t>(res[0]);
+		t[1] = static_cast<real_t>(res[1]);
+		t[2] = static_cast<real_t>(res[2]);
+		t[3] = static_cast<real_t>(res[3]);
 	}
 	else if (abs(quarticEquation.b) > quadCoeffMag * QUARTIC_THRESHOLD) {
-		auto res = EqCubic<real_t>{quarticEquation.b, quarticEquation.c, quarticEquation.d, 
+		auto res = EqCubic<internal_t>{quarticEquation.b, quarticEquation.c, quarticEquation.d, 
 				quarticEquation.e}.compute_roots();
-		std::memcpy(&t[0], &res.x, sizeof(real_t) * 3);
+		//std::memcpy(&t[0], &res.x, sizeof(real_t) * 3);
+		t[0] = static_cast<real_t>(res[0]);
+		t[1] = static_cast<real_t>(res[1]);
+		t[2] = static_cast<real_t>(res[2]);
 	}
 	else {
-		auto res = EqQuadratic<real_t>{quarticEquation.c, quarticEquation.d, quarticEquation.e}.compute_roots();
-		std::memcpy(&t[0], &res.x, sizeof(real_t) * 2);
+		auto res = EqQuadratic<internal_t>{quarticEquation.c, quarticEquation.d, quarticEquation.e}.compute_roots();
+		//std::memcpy(&t[0], &res.x, sizeof(real_t) * 2);
+		t[0] = static_cast<real_t>(res[0]);
+		t[1] = static_cast<real_t>(res[1]);
 	}
 
 	return t;

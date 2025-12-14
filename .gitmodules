@@ -28,3 +28,6 @@
 [submodule "third_party/config"]
 	path = third_party/config
 	url = https://github.com/boostorg/config
+[submodule "third_party/math"]
+	path = third_party/math
+	url = https://github.com/boostorg/math

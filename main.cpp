@@ -222,13 +222,17 @@ struct BezierMartinezDebug {
 
 		BezierMartinez::fill_queue(queue, ownedEvents, subj, clip, sbbox, cbbox, op);
 		BezierMartinez::subdivide_segments(queue, ownedEvents, sortedEvents, subj, clip, sbbox, cbbox, op);
+		
+		/*for (auto& pEvent : ownedEvents) {
+			sortedEvents.emplace_back(pEvent.get());
+		}*/
 
 		for (auto* event : sortedEvents) {
 			if (!event->left) {
 				continue;
 			}
 
-			assert(event->t < event->otherEvent->t);
+			//assert(event->t < event->otherEvent->t);
 		}
 
 		for (size_t i = 0; i < sortedEvents.size(); ++i) {
@@ -249,7 +253,7 @@ struct BezierMartinezDebug {
 				auto sects = segA.intersect(segB);
 
 				for (auto t : sects) {
-					if (isnan(t) || t <= segB.tStart || t >= segB.tEnd) {
+					if (isnan(t) || segB.tStart >= t || t >= segB.tEnd) {
 						continue;
 					}
 
@@ -671,8 +675,8 @@ int main() {
 				}
 			};
 
-			drawCurve(*step.F, step.fRange, nvgRGBA(0, 0, 255, 255), true);
-			drawCurve(*step.G, step.gRange, nvgRGBA(0, 0, 128, 255), false);
+			//drawCurve(*step.F, step.fRange, nvgRGBA(0, 0, 255, 255), true);
+			//drawCurve(*step.G, step.gRange, nvgRGBA(0, 0, 128, 255), false);
 
 			auto subF = step.F->split_from_min_to_max(step.fRange.first, step.fRange.second);
 

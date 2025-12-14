@@ -8,6 +8,7 @@ add_subdirectory(Catch2)
 add_subdirectory(glfw)
 add_subdirectory(glm)
 add_subdirectory(config)
+add_subdirectory(math)
 add_subdirectory(multiprecision)
 add_subdirectory(simdjson)
 
