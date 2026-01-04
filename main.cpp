@@ -232,6 +232,12 @@ struct BezierMartinezDebug {
 				continue;
 			}
 
+			bool ltT = event->t < event->otherEvent->t;
+			bool ltX = event->bezier.evaluate(event->t)[major]
+					< event->otherEvent->bezier.evaluate(event->otherEvent->t)[major];
+
+			//assert(ltT == ltX);
+
 			//assert(event->t < event->otherEvent->t);
 		}
 
@@ -262,7 +268,7 @@ struct BezierMartinezDebug {
 
 					if (!isnan(s) && s > segA.tStart && s < segA.tEnd) {
 						auto ptA = segA.originalBezier->evaluate(s);
-						unfoundIntersections.emplace_back(point);
+						//unfoundIntersections.emplace_back(point);
 						fromOrthoUnfound.emplace_back(ptA);
 					}
 				}
@@ -276,6 +282,7 @@ struct BezierMartinezDebug {
 				continue;
 			}
 
+			bool ltT = event->t < event->otherEvent->t;
 			Hatch::Segment seg{&event->bezier, event->t, event->otherEvent->t};
 
 			bool inResult = event->is_in_result();
@@ -293,6 +300,8 @@ struct BezierMartinezDebug {
 			nvgStrokeColor(vg, inResult ? nvgRGBA(0, 255, 0, 255) : nvgRGBA(128, 128, 128, 255));
 			//nvgStrokeColor(vg, linear ? nvgRGBA(255, 255, 0, 255) : nvgRGBA(0, 0, 255, 255));
 			
+			auto gradRed = nvgLinearGradient(vg, event->point.x, event->point.y, event->otherEvent->point.x,
+					event->otherEvent->point.y, nvgRGBA(64, 0, 0, 255), nvgRGBA(255, 0, 0, 255));
 			auto gradGreen = nvgLinearGradient(vg, event->point.x, event->point.y, event->otherEvent->point.x,
 					event->otherEvent->point.y, nvgRGBA(0, 64, 0, 255), nvgRGBA(0, 255, 0, 255));
 			auto gradGrey = nvgLinearGradient(vg, event->point.x, event->point.y, event->otherEvent->point.x,
@@ -586,14 +595,14 @@ int main() {
 					controlPoints[i + 2].y);
 			nvgStrokeWidth(vg, 2.f);
 			nvgStrokeColor(vg, nvgRGBA(255, 255, 255, 255));
-			nvgStroke(vg);
+			//nvgStroke(vg);
 		}
 
 		for (size_t i = 0; i < sizeof(controlPoints) / sizeof(controlPoints[0]); ++i) {
 			nvgBeginPath(vg);
 			nvgCircle(vg, controlPoints[i].x, controlPoints[i].y, 3.f);
 			nvgFillColor(vg, nvgRGBA(255, 0, 0, 255));
-			nvgFill(vg);
+			//nvgFill(vg);
 		}
 
 		{

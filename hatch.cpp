@@ -1,4 +1,5 @@
 #include "hatch.hpp"
+#include "boost/multiprecision/fwd.hpp"
 #include "hatch_impl.hpp"
 
 #include "pair.hpp"
@@ -279,8 +280,7 @@ bool Hatch::split_into_major_monotonic_segments(const QuadraticBezier<real_t>& b
 }
 
 real_t Hatch::intersect_ortho(const QuadraticBezier<real_t>& bezier, real_t lineConstant, int component) {
-	using internal_t = boost::multiprecision::cpp_bin_float_oct;
-	using boost::multiprecision::sqrt;
+	using internal_t = double;//boost::multiprecision::cpp_bin_float_double;
 	// https://pomax.github.io/bezierinfo/#intersections
 	internal_t points[] = {bezier.P0[component], bezier.P1[component], bezier.P2[component]};
 
